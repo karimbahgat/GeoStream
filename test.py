@@ -1,61 +1,87 @@
 
 import geostream as gs
 
-stream = gs.stream.Stream('test.db')
 
-# test create multiple tables
-fields = ['num int'.split(), 'txt text'.split()]
+with gs.stream.Stream('test.db', 'w') as stream:
 
-data1 = stream.new_table('data1', fields, True)
-print data1.fields
+    # test create multiple tables
+    fields = ['num int'.split(), 'txt text'.split()]
 
-data2 = stream.new_table('data2', fields, True)
-print data2.fields
+    data1 = stream.new_table('data1', fields, True)
+    print data1.fields
 
-print stream.tables
+    data2 = stream.new_table('data2', fields, True)
+    print data2.fields
 
-# test adding rows
-for i,char in enumerate('hello'):
-    data1.add_row(i, char)
-for i,char in enumerate('world'):
-    data1.add_row(num=i, txt=char)    
+    print stream.tables
 
-# test filtering rows
-for row in data1:
-    print row
+    # test adding rows
+    for i,char in enumerate('hello'):
+        data1.add_row(i, char)
+    for i,char in enumerate('world'):
+        data1.add_row(num=i, txt=char)    
 
-# test adding geometry
-data1.add_field('point', 'geom')
-print data1.fields
+    # test filtering rows
+    for row in data1:
+        print row
 
-source = gs.table.Table(r"C:\Users\kimok\Desktop\gazetteer data/prepped/ciesin.db", 'data')
+    # test adding geometry
+    data1.add_field('point', 'geom')
+    print data1.fields
 
-print 'inserting from geojson'
-for row in source:
-    x,y = row[2:4]
-    geoj = {'type':'Point', 'coordinates':(x,y)}
-    data1.add_row(point=geoj)
+    source = gs.table.Table(r"C:\Users\kimok\Desktop\gazetteer data/prepped/natearth.db", 'data')
 
-print 'inserting from shapely'
-from shapely.geometry import Point
-for row in source:
-    x,y = row[2:4]
-    geom = Point(x,y)
-    data1.add_row(point=geoj)
+    print 'inserting from geojson'
+    for row in source:
+        x,y = row[2:4]
+        geoj = {'type':'Point', 'coordinates':(x,y)}
+        data1.add_row(point=geoj)
 
-print len(data1)
+    print 'inserting from shapely'
+    from shapely.geometry import Point
+    for row in source:
+        x,y = row[2:4]
+        geom = Point(x,y)
+        data1.add_row(point=geoj)
 
-print 'reading'
-for row in data1:
-    pass
+    print len(data1)
 
-##    print test.fields
-##    print test.column_info()
-##
-##    def boxfunc(row):
-##        lon,lat = row['ciesin_lon'],row['ciesin_lat']
-##        return [lon,lat,lon,lat]
-##
-##    test.create_spatial_index(boxfunc)
-##    for r in test.intersection([20,20,30,30]):
-##        print r
+    print 'reading'
+    for row in data1:
+        pass
+
+    print 'creating spindex'
+    data1.create_spatial_index('point')
+
+    print 'query spindex'
+    x,y = 11,59
+    buf = 1
+    for row in data1.intersection('point', [x-buf,y-buf,x+buf,y+buf]):
+        print row
+
+    print 'store spindex'
+    data1.store_spatial_index('point')
+
+    print 'query spindex again'
+    x,y = 11,59
+    buf = 1
+    for row in data1.intersection('point', [x-buf,y-buf,x+buf,y+buf]):
+        print row
+
+    #data1.store_spatial_index('point')
+    #for r in stream.table('spatial_indexes'):
+    #    print r
+
+
+with gs.stream.Stream('test.db', 'r') as stream:
+    print 'query spindex again (after reloading)'
+    for r in stream.table('spatial_indexes'):
+        print r
+
+    data1 = stream.table('data1')
+    for row in data1.intersection('point', [x-buf,y-buf,x+buf,y+buf]):
+        print row
+
+
+
+
