@@ -15,7 +15,7 @@ class Table(object):
                 raise Exception('Table "stream" arg must be a Stream instance or a filepath to a db file.')
         self.stream = stream
 
-        if not name in self.stream.tables:
+        if not name in self.stream.tablenames:
             raise Exception('Could not find a table by the name "{}"'.format(name))
 
     def __len__(self):
@@ -24,9 +24,13 @@ class Table(object):
     def __iter__(self):
         return self.filter()
 
+    #### Hidden
+
     def _column_info(self):
         # cid,name,typ,notnull,default,pk
         return list(self.stream.c.execute('PRAGMA table_info({})'.format(self.name)))
+
+    #### Fields
 
     def add_field(self, field, typ):
         self.stream.c.execute('ALTER TABLE {name} ADD {field} {typ}'.format(name=self.name, field=field, typ=typ))
@@ -38,10 +42,22 @@ class Table(object):
 
     @property
     def fieldnames(self):
-        info = self.column_info()
+        info = self._column_info()
         return [name for _,name,_,_,_,_ in info]
 
-    ####
+    #### Metadata
+
+    def describe(self):
+        ident = '  '
+        lines = ['Streaming Table:',
+                 ident+'Name: "{}"'.format(self.name),
+                 ident+'Rows ({})'.format(len(self)),
+                 ident+'Fields ({})'.format(len(self.fieldnames))]
+        lines += [ident*2+'{} ({})'.format(name,typ)
+                  for name,typ in self.fields]
+        print('\n'.join(lines))
+
+    #### Basic Functions
 
     def set(self, values=None, where=None):
         cols,vals = zip(*values.items())
@@ -76,6 +92,10 @@ class Table(object):
             self.stream.c.execute('INSERT INTO {} ({}) VALUES ({})'.format(self.name, colstring, questionmarks), vals)
 
     #### Spatial indexing
+
+    # TODO: Move all spatial indexing to separate class
+    # incl moving the spatial_indexes memory dict to the new class
+    # ...
             
     def create_spatial_index(self, geofield):
         # create the spatial index

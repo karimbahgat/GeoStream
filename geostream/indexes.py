@@ -19,3 +19,21 @@ from sqlite3 import Binary
 ##
 ##sqlite3.register_adapter(Index, idx_to_blob)
 ##sqlite3.register_converter('rtree', from_blob)
+
+class Spatial_Index_Manager:
+    pass
+
+class RTreeIndex:
+    pass
+
+class _RTreeBackend:
+    pass
+
+class _PyRTreeBackend:
+    pass
+
+class QuadTreeIndex:
+    pass
+
+class _PyqtreeBackend:
+    pass
