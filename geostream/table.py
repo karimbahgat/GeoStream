@@ -15,8 +15,24 @@ class Table(object):
                 raise Exception('Table "stream" arg must be a Stream instance or a filepath to a db file.')
         self.stream = stream
 
-        if not name in self.stream.tablenames:
+        if not name in self.stream.tablenames + self.stream.metatablenames:
             raise Exception('Could not find a table by the name "{}"'.format(name))
+
+    def __str__(self):
+        ident = '  '
+        numgeoms = self.get(['COUNT(oid)'], where='geom IS NOT NULL')[0]
+        numspindex = self.stream.table('spatial_indexes').get(['COUNT(oid)'], where="tbl = '{}'".format(self.name))[0]
+        lines = ['Streaming Table:',
+                 ident+'Name: "{}"'.format(self.name),
+                 ident+'Rows ({})'.format(len(self)),
+                 ident+'Geometries ({})'.format(numgeoms),
+                 ident+'Spatial Indexes ({})'.format(numspindex),
+                 ident+'Fields ({})'.format(len(self.fieldnames))]
+        fieldlist = ['{} ({})'.format(name,typ) for name,typ in self.fields]
+        lines += [ident*2 + '\t\t\t'.join(fieldlist[i:i+4])
+                  for i in range(0, len(fieldlist), 4)]
+        descr = '\n'.join(lines)
+        return descr
 
     def __len__(self):
         return self.stream.c.execute('SELECT COUNT(oid) FROM {}'.format(self.name)).fetchone()[0]
@@ -48,14 +64,7 @@ class Table(object):
     #### Metadata
 
     def describe(self):
-        ident = '  '
-        lines = ['Streaming Table:',
-                 ident+'Name: "{}"'.format(self.name),
-                 ident+'Rows ({})'.format(len(self)),
-                 ident+'Fields ({})'.format(len(self.fieldnames))]
-        lines += [ident*2+'{} ({})'.format(name,typ)
-                  for name,typ in self.fields]
-        print('\n'.join(lines))
+        print(self.__str__())
 
     #### Basic Functions
 

@@ -1,6 +1,8 @@
 
 import sqlite3
 import os
+import shutil
+from itertools import izip
 
 from .table import Table
 
@@ -8,19 +10,43 @@ class Stream(object):
     def __init__(self, path, mode='r'):
         self.path = path
         self.mode = mode
-        self.db = sqlite3.connect(path, detect_types=sqlite3.PARSE_DECLTYPES)
+        self._connect()
+        if self.mode == 'w':
+            self._setup()
+
+    def _connect(self):
+        # connect to db
+        self.db = sqlite3.connect(self.path, detect_types=sqlite3.PARSE_DECLTYPES)
         self.c = self.db.cursor()
 
+        # connect to spatial indexes, if any
         self.spatial_indexes = dict() # where they are stored when loaded in memory
 
-        if mode == 'w':
+    def _setup(self):
+        # TODO: make metatables start with _ underscore
+        # and don't show when listing tables
+        metatables = self.metatablenames
+        if not 'spatial_indexes' in metatables:
             # create spatial index tables
             fields = ['tbl', 'col', 'rtree_idx', 'rtree_dat']
             typs = ['text', 'text', 'blob', 'blob']
-            self.new_table('spatial_indexes', list(zip(fields, typs)), replace=True)
+            self.new_table('spatial_indexes', list(zip(fields, typs)))
 
-            # create crs/srs tables
-            # ...
+        # create crs/srs tables
+        # ...
+
+    # Builtins
+
+    def __str__(self):
+        ident = '  '
+        lines = ['Streaming Environment: ',
+                 ident+'Location: "{}"'.format(self.path),
+                 ident+'Spatial Indexes ({})'.format(len(self.table('spatial_indexes'))),
+                 ident+'Datasets ({})'.format(len(self.tablenames)),]
+        lines += [ident*2+'"{}" ({} fields, {} rows)'.format(tab.name,len(tab.fieldnames),len(tab))
+                  for tab in self.tables()]
+        descr = '\n'.join(lines)
+        return descr
 
     def __enter__(self):
         return self
@@ -31,6 +57,8 @@ class Stream(object):
     def __del__(self):
         self.close()
 
+    # Handling
+
     def close(self):
         # store back any unsaved spatial indexes
         for (name,field),idx in self.spatial_indexes.items():
@@ -39,19 +67,48 @@ class Stream(object):
         # close up the db
         self.db.commit()
         self.c.close()
+        self.db.close()
 
-    def  describe(self):
-        ident = '  '
-        lines = ['Streaming Environment: ',
-                 ident+'Spatial Indexes ({})'.format(len(self.table('spatial_indexes'))),
-                 ident+'Datasets ({})'.format(len(self.tablenames)),]
-        lines += [ident*2+'"{}" ({} fields, {} rows)'.format(tab.name,len(tab.fieldnames),len(tab))
-                  for tab in self.tables()]
-        print('\n'.join(lines))
+    def clear(self, confirm=False):
+        if confirm and self.mode == 'w':
+            self.close()
+            os.remove(self.path)
+            self._connect()
+            self._setup()
+        else:
+            raise Exception('To clear this database ({}) you must set confirm = True'.format(self.path))
+
+    def delete(self, confirm=False):
+        if confirm and self.mode == 'w':
+            self.close()
+            os.remove(self.path)
+        else:
+            raise Exception('To delete this database from disk ({}) you must set confirm = True'.format(self.path))
+
+    def fork(self, path):
+        self.db.commit()
+        shutil.copyfile(self.path, path)
+        return Stream(path, 'w')
+
+    # Metadata
+
+    def describe(self):
+        print(self.__str__())
+
+    # Tables
 
     @property
     def tablenames(self):
         names = [row[0] for row in self.c.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+        metanames = self.metatablenames
+        names = [n for n in names if n not in metanames]
+        return tuple(names)
+
+    @property
+    def metatablenames(self):
+        names = [row[0] for row in self.c.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+        metanames = ('spatial_indexes',)
+        names = [n for n in names if n in metanames]
         return tuple(names)
 
     def table(self, name):
@@ -60,6 +117,8 @@ class Stream(object):
     def tables(self):
         for name in self.tablenames:
             yield self.table(name)
+
+    # Data creation
 
     def new_table(self, name, fields, replace=False):
         if replace:
@@ -70,8 +129,7 @@ class Stream(object):
         self.db.commit()
         return Table(self, name)
 
-    def import_table(self, name, source, fieldnames=None, fieldtypes=None, sniffsize=10000, replace=False):
-
+    def import_table(self, name, source, fieldnames=None, fieldtypes=None, keepfields=None, dropfields=None, sniffsize=10000, replace=False):
         if isinstance(source, str):
             # load using format loaders
             # this should give use
@@ -80,28 +138,53 @@ class Stream(object):
             # ...
             raise NotImplementedError('Loading from external files not yet supported, but planned')
 
-        # determine fields
-        if fieldtypes:
+
+
+        # fields are known
+        if fieldnames and fieldtypes:
+            fields = list(zip(fieldnames, fieldtypes))
+            
+            # add geom field
+            fields.append(('geom','geom'))
+                
             # create the table
             table = self.new_table(name, fields, replace=replace)
+
+            # add geom to each row
+            source = (list(row)+[geo]
+                      for row,geo in source)
+            
+            # add the source rows
+            for row in source:
+                table.add_row(*row)
+
+        # need to determine fields
         else:
             # make sure we have fieldnames at least
             if not fieldnames:
                 raise Exception('Fieldnames must be given or detectable from a source file')
+
+            # add geom to each row
+            source = (list(row)+[geo]
+                      for row,geo in source)
             
-            # sniff the first fields to detect field types
+            # detect field types from the first few rows
             type_tests = [('int', lambda v: float(v).is_integer() ),
                           ('real', lambda v: float(v) ),
                           ('bool', lambda v: v in (True,False) ),
                           ('text', lambda v: v ),
                           ]
+            
+            # collect the sniff sample
             sniffsample = []
             for i,row in enumerate(source):
                 sniffsample.append(row)
                 if i >= sniffsize:
                     break
+                
+            # begin sniffing
             fieldtypes = []
-            for colname,column in zip(fieldnames, zip(*sniffsample)):
+            for colname,column in izip(fieldnames, izip(*sniffsample)):
                 valid = (v for v in column if v is not None)
                 typegen = iter(type_tests)
                 typ,typtest = next(typegen)
@@ -119,22 +202,24 @@ class Stream(object):
                         # and check again
                         typ,typtest = next(typegen)
                 # sniffsample for that column complete
-                #print colname,typ,v
                 fieldtypes.append(typ)
 
             # now we can define the fields
-            fields = zip(fieldnames, fieldtypes)
+            fields = list(zip(fieldnames, fieldtypes))
+
+            # add geom field
+            fields.append(('geom','geom'))
 
             # create the table
             table = self.new_table(name, fields, replace=replace)
 
-            # and finally add the data from the sniffsample
+            # add the data from the sniffsample
             for row in sniffsample:
                 table.add_row(*row)
         
-        # iterate and add what remains of the source
-        for row in source:
-            table.add_row(*row)
+            # iterate and add what remains of the source
+            for row in source:
+                table.add_row(*row)
 
         return table
 
