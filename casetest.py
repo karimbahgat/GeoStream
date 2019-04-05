@@ -21,7 +21,7 @@ stream.import_table('countries', ((f.row,f.geometry) for f in source), fieldname
 ##source = pg.VectorData(r"C:\Users\kimok\Desktop\gazetteer data\raw\global_settlement_points_v1.01.shp", encoding='latin')
 ##print 'importing source'
 ##stream.import_table('cities', ((f.row,f.geometry) for f in source), fieldnames=source.fields, replace=True)
-##
+
 ##print 'loading source'
 ##source = pg.VectorData(r"C:\Users\kimok\Desktop\gazetteer data\raw\global_settlement_points_v1.01.shp", encoding='latin')
 ##print 'importing source'
@@ -33,14 +33,28 @@ stream.describe()
 for tab in stream.tables():
     tab.describe()
 
+# calc some stats
+print 'calc some stats'
+countries = stream.table('countries')
+print '# values()'
+for reg in countries.values('subregion'):
+    print reg
+print '# groupby()'
+for k,gr in countries.groupby('iso_a2', by='subregion'):
+    print k,len(list(gr))
+print '# aggregate()'
+for row in countries.aggregate(['subregion','count(iso_a2)'], by='subregion'):
+    print row
+for row in countries.aggregate(['subregion','avg(pop_est)'], by='subregion'):
+    print row
+fsdfsd
+
+# now do some geo things
 # create spindex
 print 'create spindexes'
 for tab in stream.tables():
     tab.create_spatial_index('geom')
 stream.describe()
-
-# now do some things
-# ...
 
 # finally, fork the workspace and then delete it
 print 'fork and delete the workspace'

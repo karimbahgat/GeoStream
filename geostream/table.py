@@ -9,7 +9,7 @@ class Table(object):
 
         from .stream import Stream
         if not isinstance(stream, Stream):
-            if isinstance(stream, str):
+            if isinstance(stream, basestring):
                 stream = Stream(stream)
             else:
                 raise Exception('Table "stream" arg must be a Stream instance or a filepath to a db file.')
@@ -20,8 +20,8 @@ class Table(object):
 
     def __str__(self):
         ident = '  '
-        numgeoms = self.get(['COUNT(oid)'], where='geom IS NOT NULL')[0]
-        numspindex = self.stream.table('spatial_indexes').get(['COUNT(oid)'], where="tbl = '{}'".format(self.name))[0]
+        numgeoms = self.get('COUNT(oid)', where='geom IS NOT NULL')
+        numspindex = self.stream.table('spatial_indexes').get('COUNT(oid)', where="tbl = '{}'".format(self.name))
         lines = ['Streaming Table:',
                  ident+'Name: "{}"'.format(self.name),
                  ident+'Rows ({})'.format(len(self)),
@@ -35,7 +35,7 @@ class Table(object):
         return descr
 
     def __len__(self):
-        return self.stream.c.execute('SELECT COUNT(oid) FROM {}'.format(self.name)).fetchone()[0]
+        return self.get('COUNT(oid)')
 
     def __iter__(self):
         return self.filter()
@@ -81,6 +81,8 @@ class Table(object):
 
     def filter(self, fields=None, where=None, limit=None):
         if fields:
+            if isinstance(fields, basestring):
+                fields = [fields]
             fieldstring = ','.join(fields)
         else:
             fieldstring = '*'
@@ -88,7 +90,11 @@ class Table(object):
         if where: query += ' WHERE {}'.format(where)
         if limit: query += ' LIMIT {}'.format(limit)
         #print query
-        return self.stream.c.execute(query)
+        result = self.stream.c.execute(query)
+        if len(fields) == 1:
+            return (row[0] for row in result)
+        else:
+            return result
 
     def add_row(self, *row, **kw):
         if row:
@@ -99,6 +105,64 @@ class Table(object):
             colstring = ','.join((col for col in cols))
             questionmarks = ','.join(('?' for _ in cols))
             self.stream.c.execute('INSERT INTO {} ({}) VALUES ({})'.format(self.name, colstring, questionmarks), vals)
+
+    #### Manipulations
+
+    def join(self):
+        pass
+
+    #### Stats
+
+    def values(self, fields, where=None, order=None, limit=None):
+        if isinstance(fields, basestring):
+            fields = [fields]
+        fieldstring = ', '.join(fields)
+        query = 'SELECT DISTINCT {} FROM {}'.format(fieldstring, self.name)
+        if where: query += ' WHERE {}'.format(where)
+        if limit: query += ' LIMIT {}'.format(limit)
+        if order:
+            ordstring = ', '.join(order)
+            query += ' ORDER BY {}'.format(ordstring)
+        # return
+        result = self.stream.c.execute(query)
+        if len(fields) == 1:
+            return (row[0] for row in result)
+        else:
+            return result
+
+    def groupby(self, fields, by, where=None, order=None):
+        uniq = self.values(by, where=where, order=order)
+        uniq = list(uniq)
+        if isinstance(by, basestring):
+            by = [by]
+            uniq = ([v] for v in uniq)
+        for u in uniq:
+            u = ["'{}'".format(v) if isinstance(v, basestring) else "{}".format(v)
+                 for v in u]
+            byvals = zip(by, u)
+            wherestring = ' AND '.join(['{} = {}'.format(b, v) for b,v in byvals])
+            query = self.filter(fields, where=wherestring)
+            if len(by) == 1:
+                u = u[0]
+            yield u,query
+
+    def aggregate(self, stats, by=None, where=None, order=None, limit=None):
+        statstring = ', '.join(stats)
+        query = 'SELECT {} FROM {}'.format(statstring, self.name)
+        if where: query += ' WHERE {}'.format(where)
+        if by:
+            if isinstance(by, basestring):
+                by = [by]
+            bystring = ', '.join(by)
+            query += ' GROUP BY {}'.format(bystring)
+        if order:
+            ordstring = ', '.join(order)
+            query += ' ORDER BY {}'.format(ordstring)
+        result = self.stream.c.execute(query)
+        if len(stats) == 1:
+            return (row[0] for row in result)
+        else:
+            return result
 
     #### Spatial indexing
 
