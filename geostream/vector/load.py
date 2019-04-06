@@ -9,6 +9,7 @@ file_extensions = {".shp": "Shapefile",
                    ".xlsx": "Excel",
                    ".dta": "Stata",
                    ".csv": "CSV",
+                   ".tsv": "TSV",
                    ".txt": "Text-Delimited",
                    }
 
@@ -23,7 +24,7 @@ def detect_filetype(filepath):
 def from_file(filepath, **kwargs):
     filetype = detect_filetype(filepath)
     
-    if filetype in ('CSV','Text-Delimited'):
+    if filetype in ('CSV','TSV','Text-Delimited'):
         reader = fileformats.TextDelimited(filepath, **kwargs)
 
     elif filetype == 'Shapefile':

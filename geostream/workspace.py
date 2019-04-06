@@ -3,7 +3,7 @@ import sqlite3
 import os
 import shutil
 import warnings
-from itertools import izip
+from itertools import izip, izip_longest
 
 from . import vector
 
@@ -172,6 +172,13 @@ class Workspace(object):
 
         # wrap in a progress tracker
         if verbose:
+            # by byte position in file
+##            reader.fileobj.seek(0, 2)
+##            end = reader.fileobj.tell()
+##            def filecallback(a,b,c,d):
+##                print reader.fileobj.tell()/float(end)
+##            source = track_progress(source, 'Importing table "{}"'.format(name), callback=filecallback)
+            # by row
             source = track_progress(source, 'Importing table "{}"'.format(name))
 
         # fields are known
@@ -189,8 +196,12 @@ class Workspace(object):
                       for row,geo in source)
             
             # add the source rows
+            fails = 0
             for row in source:
-                table.add_row(*row)
+                try: table.add_row(*row)
+                except:
+                    warnings.warn('One or more rows could not be added due to unknown problems')
+                    fails += 1
 
         # need to determine fields
         else:
@@ -218,7 +229,7 @@ class Workspace(object):
                 
             # begin sniffing
             fieldtypes = []
-            for colname,column in izip(fieldnames, izip(*sniffsample)):
+            for colname,column in izip(fieldnames, izip_longest(*sniffsample)):
                 valid = (v for v in column if v is not None)
                 typegen = iter(type_tests)
                 typ,typtest = next(typegen)
@@ -248,12 +259,22 @@ class Workspace(object):
             table = self.new_table(name, fields, replace=replace)
 
             # add the data from the sniffsample
+            fails = 0
             for row in sniffsample:
-                table.add_row(*row)
+                try: table.add_row(*row)
+                except:
+                    warnings.warn('One or more rows could not be added due to unknown problems')
+                    fails += 1
         
             # iterate and add what remains of the source
             for row in source:
-                table.add_row(*row)
+                try: table.add_row(*row)
+                except:
+                    warnings.warn('One or more rows could not be added due to unknown problems')
+                    fails += 1
+
+        if fails > 0:
+            warnings.warn('A total of {} of rows could not be imported due to unknown problems'.format(fails))
 
         return table
 

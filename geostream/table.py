@@ -20,7 +20,7 @@ class Table(object):
 
     def __str__(self):
         ident = '  '
-        numgeoms = self.get('COUNT(oid)', where='geom IS NOT NULL')
+        numgeoms = self.get('COUNT(oid)', where='geom IS NOT NULL') if 'geom' in self.fieldnames else 0
         numspindex = self.workspace.table('spatial_indexes').get('COUNT(oid)', where="tbl = '{}'".format(self.name))
         lines = ['Streaming Table:',
                  ident+'Name: "{}"'.format(self.name),
@@ -66,20 +66,13 @@ class Table(object):
     def describe(self):
         print(self.__str__())
 
-    #### Basic Functions
-
-    def set(self, values=None, where=None):
-        cols,vals = zip(*values.items())
-        valuestring = ', '.join(('{} = ?'.format(col) for col in cols))
-        query = 'UPDATE {} SET {}'.format(self.name, valuestring)
-        if where: query += ' WHERE {}'.format(where)
-        #print query
-        self.workspace.c.execute(query, vals)
+    #### Reading
 
     def get(self, fields=None, where=None):
         return next(self.filter(fields, where, limit=1))
 
     def filter(self, fields=None, where=None, limit=None):
+        # Note: Maybe rename to select()?
         if fields:
             if isinstance(fields, basestring):
                 fields = [fields]
@@ -97,6 +90,11 @@ class Table(object):
         else:
             return result
 
+    #### Writing
+
+    def add_field(self, name, type):
+        self.workspace.c.execute('ALTER TABLE {table} ADD {field} {type}'.format(table=self.name, field=name, type=type))
+
     def add_row(self, *row, **kw):
         if row:
             questionmarks = ','.join(('?' for _ in row))
@@ -107,11 +105,86 @@ class Table(object):
             questionmarks = ','.join(('?' for _ in cols))
             self.workspace.c.execute('INSERT INTO {} ({}) VALUES ({})'.format(self.name, colstring, questionmarks), vals)
 
+    def set(self, **values):
+        # Setting to constant values
+        where = values.pop('where', None)
+        
+        cols,vals = zip(*values.items())
+        valuestring = ', '.join(('{} = ?'.format(col) for col in cols))
+        query = 'UPDATE {} SET {}'.format(self.name, valuestring)
+        
+        if where: query += ' WHERE {}'.format(where)
+        
+        self.workspace.c.execute(query, vals)
+
+    def recode(self, field, **conditions):
+        # Setting to multiple constant values depending on conditions
+        conds,vals = zip(*conditions.items())
+        whenstring = 'CASE'
+        for cond in conds:
+            whenstring += ' WHEN {} THEN ?'.format(cond)
+        whenstring += ' END'
+        
+        query = 'UPDATE {}'.format(self.name)
+        query += ' SET {} = ({})'.format(field, whenstring)
+        
+        self.workspace.c.execute(query, vals)
+
+    def compute(self, **expressions):
+        # Setting to expressions, same as set() under the hood
+        self.set(**expressions)
+
     #### Manipulations
 
-    def join(self):
-        pass
+    def join(self, other, conditions, keep_fields=None, keep_all=True, output=False):
+        # wrap single args in lists
+        if isinstance(conditions, basestring):
+            conditions = [conditions]
+        if isinstance(keep_fields, basestring):
+            keep_fields = [keep_fields]
 
+        # by default keep all fields
+        if not keep_fields:
+            keep_fieldstring = '*'
+        else:
+            keep_fieldstring = ', '.join(keep_fields)
+
+        # determine join type
+        if keep_all:
+            jointype = 'LEFT JOIN'
+        else:
+            jointype = 'INNER JOIN'
+
+        # construct query
+        conditionstring = ', '.join(conditions)
+        query = 'SELECT {fields} FROM {left} {jointype} {right} WHERE {conditions}'.format(fields=keep_fieldstring,
+                                                                                           left=self.name,
+                                                                                           jointype=jointype,
+                                                                                           right=other.name,
+                                                                                           conditions=conditionstring)
+
+        # execute query
+        result = self.workspace.db.cursor().execute(query)
+
+        # return results
+        if output:
+            # determine fields
+            leftfields = [('{}_{}'.format(self.name,f), typ) for f,typ in self.fields]
+            rightfields = [('{}_{}'.format(other.name,f), typ) for f,typ in other.fields]
+            fields = leftfields + rightfields
+            if keep_fields:
+                keep_fields = [f.replace('.', '_') for f in keep_fields]
+                fields = [(f,typ) for f,typ in fields if f in keep_fields]
+
+            # create new table
+            table = self.workspace.new_table(output, fields)
+            for row in result:
+                table.add_row(*row)
+            return table
+        else:
+            # iterate through result
+            return result
+        
     #### Stats
 
     def values(self, fields, where=None, order=None, limit=None):
@@ -143,10 +216,10 @@ class Table(object):
         else:
             return result
 
-    def groupby(self, fields, by, where=None, order=None):
+    def groupby(self, by, keep_fields=None, where=None, order=None):
         # wrap single args in lists
-        if isinstance(fields, basestring):
-            fields = [fields]
+        if isinstance(keep_fields, basestring):
+            keep_fields = [keep_fields]
         if isinstance(by, basestring):
             by = [by]
         if order and isinstance(order, basestring):
@@ -166,7 +239,7 @@ class Table(object):
             byvals = zip(by, u)
             wherestring = ' AND '.join(['{} = {}'.format(b, v) for b,v in byvals])
             # execute and return unique value with group result
-            group = self.filter(fields, where=wherestring)
+            group = self.filter(keep_fields, where=wherestring)
             if len(by) == 1:
                 u = u[0]
             yield u,group
@@ -272,7 +345,7 @@ class Table(object):
             dat = Binary(fobj.read())
         # update the idx and dat columns in the spatial_indexes table
         idxtable = self.workspace.table('spatial_indexes')
-        idxtable.set(dict(rtree_idx=idx, rtree_dat=dat),
+        idxtable.set(rtree_idx=idx, rtree_dat=dat,
                      where="tbl = '{}' AND col = '{}' ".format(self.name, geofield))
 
     def intersection(self, geofield, bbox):

@@ -56,6 +56,9 @@ class TextDelimited(object):
         sniffsize = self.kwargs.pop('sniffsize', 10)
         dialect = csv.Sniffer().sniff(self.fileobj.read(1056*sniffsize)) 
         self.fileobj.seek(0)
+
+        # .tsv files are by definition tab-separated
+        dialect.delimiter = '\t'
         
         # overwrite with user input
         for k,v in self.kwargs.items():

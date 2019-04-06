@@ -14,29 +14,32 @@ workspace.clear(True)
 # import datasets
 print 'importing datasets'
 
-if 0:
-    # timing test
-    print 'timing tests'
-    from time import time
-    t=time()
-    pg.VectorData(r"C:\Users\kimok\Desktop\gazetteer data\raw\global_settlement_points_v1.01.shp", encoding='latin')
-    print 'pythongis', time()-t
-    t=time()
-    workspace.import_table('cities', r"C:\Users\kimok\Desktop\gazetteer data\raw\global_settlement_points_v1.01.shp", replace=True, encoding='latin')
-    print 'stream import', time()-t
-    t=time()
-    for row in workspace.table('cities'):
-        pass
-    print 'streaming from db', time()-t
-    workspace.clear(True)
+##if 0:
+##    # timing test
+##    print 'timing tests'
+##    from time import time
+##    t=time()
+##    pg.VectorData(r"C:\Users\kimok\Desktop\gazetteer data\raw\global_settlement_points_v1.01.shp", encoding='latin')
+##    print 'pythongis', time()-t
+##    t=time()
+##    workspace.import_table('cities', r"C:\Users\kimok\Desktop\gazetteer data\raw\global_settlement_points_v1.01.shp", replace=True, encoding='latin')
+##    print 'stream import', time()-t
+##    t=time()
+##    for row in workspace.table('cities'):
+##        pass
+##    print 'streaming from db', time()-t
+##    workspace.clear(True)
 
-workspace.import_table('un_messy', r"C:\Users\kimok\Desktop\gazetteer data\raw\WUP2018-F12-Cities_Over_300K.xls", replace=True, skip=16)
-workspace.import_table('un', r"C:\Users\kimok\Desktop\gazetteer data\extracted\un.csv", replace=True)
+#workspace.import_table('un_messy', r"C:\Users\kimok\Desktop\gazetteer data\raw\WUP2018-F12-Cities_Over_300K.xls", replace=True, skip=16)
+#workspace.import_table('un', r"C:\Users\kimok\Desktop\gazetteer data\extracted\un.csv", replace=True)
 workspace.import_table('countries', r"C:\Users\kimok\Desktop\gazetteer data\raw\ne_10m_admin_0_countries.shp", replace=True)
-#workspace.import_table('cities', r"C:\Users\kimok\Desktop\gazetteer data\raw\global_settlement_points_v1.01.shp", replace=True, encoding='latin')
+workspace.import_table('ne_cities', r"C:\Users\kimok\Desktop\gazetteer data\raw\ne_10m_populated_places.shp", replace=True)
+#workspace.import_table('ciesin_cities', r"C:\Users\kimok\Desktop\gazetteer data\raw\global_settlement_points_v1.01.shp", replace=True, encoding='latin')
 #workspace.import_table('urban', r"C:\Users\kimok\Desktop\gazetteer data\raw\global_urban_extent_polygons_v1.01.shp", replace=True, encoding='latin')
+#workspace.import_table('gns_raw', r"C:\Users\kimok\Desktop\gazetteer data\raw\Countries_populatedplaces_p.txt", replace=True)
+#workspace.import_table('osm_raw', r"C:\Users\kimok\Desktop\gazetteer data\raw\planet-latest_geonames.tsv", replace=True)
 
-# inspect our stream
+# inspect our workspace
 print 'inspect initial workspace'
 workspace.describe()
 for tab in workspace.tables():
@@ -45,17 +48,27 @@ for tab in workspace.tables():
 # calc some stats
 print 'calc some stats'
 countries = workspace.table('countries')
+cities = workspace.table('ne_cities')
 print '# values()'
 for reg in countries.values('subregion', order='subregion'):
     print reg
 print '# groupby()'
-for k,gr in countries.groupby('iso_a2', by='subregion', order='subregion'):
+for k,gr in countries.groupby(by='subregion', keep_fields='iso_a2', order='subregion'):
     print k,len(list(gr))
 print '# aggregate()'
 for row in countries.aggregate('count(iso_a2)', by='subregion'):
     print row
 for row in countries.aggregate('avg(pop_est)', by='subregion'):
     print row
+print '# join() streaming'
+for row in countries.join(cities, 'countries.iso_a3 = ne_cities.ADM0_A3',
+                          keep_fields=['countries.NAME', 'ne_cities.NAME']):
+    pass 
+print '# join() with output'
+joined_table = countries.join(cities, 'countries.iso_a3 = ne_cities.ADM0_A3',
+                              keep_fields=['countries.NAME', 'ne_cities.NAME'], #, 'ne_cities.geom'],
+                              output='joined')
+print joined_table
 
 # now do some geo things
 # create spindex
