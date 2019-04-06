@@ -4,62 +4,72 @@ import geostream as gs
 
 TESTFILE = 'casetest.db'
 
-stream = gs.stream.Stream(TESTFILE, 'w')
+workspace = gs.Workspace(TESTFILE, 'w')
 
 # start by clearing the database
-try: stream.clear()
+try: workspace.clear()
 except Exception as err: print err
-stream.clear(True)
+workspace.clear(True)
 
 # import datasets
-print 'loading source'
-source = pg.VectorData(r"C:\Users\kimok\Desktop\gazetteer data\raw\ne_10m_admin_0_countries.shp", encoding='latin')
-print 'importing source'
-stream.import_table('countries', ((f.row,f.geometry) for f in source), fieldnames=source.fields, replace=True)
+print 'importing datasets'
 
-##print 'loading source'
-##source = pg.VectorData(r"C:\Users\kimok\Desktop\gazetteer data\raw\global_settlement_points_v1.01.shp", encoding='latin')
-##print 'importing source'
-##stream.import_table('cities', ((f.row,f.geometry) for f in source), fieldnames=source.fields, replace=True)
+if 0:
+    # timing test
+    print 'timing tests'
+    from time import time
+    t=time()
+    pg.VectorData(r"C:\Users\kimok\Desktop\gazetteer data\raw\global_settlement_points_v1.01.shp", encoding='latin')
+    print 'pythongis', time()-t
+    t=time()
+    workspace.import_table('cities', r"C:\Users\kimok\Desktop\gazetteer data\raw\global_settlement_points_v1.01.shp", replace=True, encoding='latin')
+    print 'stream import', time()-t
+    t=time()
+    for row in workspace.table('cities'):
+        pass
+    print 'streaming from db', time()-t
+    workspace.clear(True)
 
-##print 'loading source'
-##source = pg.VectorData(r"C:\Users\kimok\Desktop\gazetteer data\raw\global_settlement_points_v1.01.shp", encoding='latin')
-##print 'importing source'
-##stream.import_table('urban', ((f.row,f.geometry) for f in source), fieldnames=source.fields, replace=True)
+workspace.import_table('un_messy', r"C:\Users\kimok\Desktop\gazetteer data\raw\WUP2018-F12-Cities_Over_300K.xls", replace=True, skip=16)
+workspace.import_table('un', r"C:\Users\kimok\Desktop\gazetteer data\extracted\un.csv", replace=True)
+workspace.import_table('countries', r"C:\Users\kimok\Desktop\gazetteer data\raw\ne_10m_admin_0_countries.shp", replace=True)
+#workspace.import_table('cities', r"C:\Users\kimok\Desktop\gazetteer data\raw\global_settlement_points_v1.01.shp", replace=True, encoding='latin')
+#workspace.import_table('urban', r"C:\Users\kimok\Desktop\gazetteer data\raw\global_urban_extent_polygons_v1.01.shp", replace=True, encoding='latin')
 
 # inspect our stream
 print 'inspect initial workspace'
-stream.describe()
-for tab in stream.tables():
+workspace.describe()
+for tab in workspace.tables():
     tab.describe()
 
 # calc some stats
 print 'calc some stats'
-countries = stream.table('countries')
+countries = workspace.table('countries')
 print '# values()'
-for reg in countries.values('subregion'):
+for reg in countries.values('subregion', order='subregion'):
     print reg
 print '# groupby()'
-for k,gr in countries.groupby('iso_a2', by='subregion'):
+for k,gr in countries.groupby('iso_a2', by='subregion', order='subregion'):
     print k,len(list(gr))
 print '# aggregate()'
-for row in countries.aggregate(['subregion','count(iso_a2)'], by='subregion'):
+for row in countries.aggregate('count(iso_a2)', by='subregion'):
     print row
-for row in countries.aggregate(['subregion','avg(pop_est)'], by='subregion'):
+for row in countries.aggregate('avg(pop_est)', by='subregion'):
     print row
-fsdfsd
 
 # now do some geo things
 # create spindex
 print 'create spindexes'
-for tab in stream.tables():
+for tab in workspace.tables():
     tab.create_spatial_index('geom')
-stream.describe()
+workspace.describe()
+# and more...
+# ...
 
 # finally, fork the workspace and then delete it
 print 'fork and delete the workspace'
-forked = stream.fork('casetest_fork.db')
-stream.describe()
+forked = workspace.fork('casetest_fork.db')
+workspace.describe()
 forked.describe()
 forked.delete(True)
 

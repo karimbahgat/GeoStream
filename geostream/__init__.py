@@ -1,5 +1,5 @@
 
-from . import stream
-from . import table
-from . import vector
-from . import indexes
+from . import *
+
+from .workspace import Workspace
+from .table import Table

@@ -2,11 +2,15 @@
 import sqlite3
 import os
 import shutil
+import warnings
 from itertools import izip
 
-from .table import Table
+from . import vector
 
-class Stream(object):
+from .table import Table
+from .verbose import track_progress
+
+class Workspace(object):
     def __init__(self, path, mode='r'):
         self.path = path
         self.mode = mode
@@ -39,7 +43,7 @@ class Stream(object):
 
     def __str__(self):
         ident = '  '
-        lines = ['Streaming Environment: ',
+        lines = ['Streaming Workspace: ',
                  ident+'Location: "{}"'.format(self.path),
                  ident+'Spatial Indexes ({})'.format(len(self.table('spatial_indexes'))),
                  ident+'Datasets ({})'.format(len(self.tablenames)),]
@@ -88,7 +92,7 @@ class Stream(object):
     def fork(self, path):
         self.db.commit()
         shutil.copyfile(self.path, path)
-        return Stream(path, 'w')
+        return Workspace(path, 'w')
 
     # Metadata
 
@@ -121,24 +125,54 @@ class Stream(object):
     # Data creation
 
     def new_table(self, name, fields, replace=False):
+        # drop existing table if exists
         if replace:
             self.c.execute('DROP TABLE IF EXISTS {}'.format(name))
+
+        # to save heartache later, auto replace problematic fieldname characters like underscore, period, etc.
+        def clean(name):
+            # ensure is text
+            name = name if isinstance(name, basestring) else str(name)
+            # replace problematic characters with underscore
+            name = name.replace(' ', '_').replace('.', '_')
+            # insert ensure name starts with a character
+            if not name[0].isalpha():
+                name = '_' + name
+            # check for reserved names
+            if name in ('Index',):
+                name = '_' + name
+            return name
+        newfields = []
+        for fn,typ in fields:
+            cleaned = clean(fn)
+            if cleaned != fn:
+                warnings.warn('Field name "{}" was cleaned of problematic characters and its new name is now "{}". '.format(fn, cleaned))
+            newfields.append((cleaned, typ))
+        fields = newfields
         
+        # create table
         fieldstring = ', '.join(['{} {}'.format(fn,typ) for fn,typ in fields])
         self.c.execute('''CREATE TABLE {name} ({fieldstring})'''.format(name=name, fieldstring=fieldstring))
         self.db.commit()
         return Table(self, name)
 
-    def import_table(self, name, source, fieldnames=None, fieldtypes=None, keepfields=None, dropfields=None, sniffsize=10000, replace=False):
-        if isinstance(source, str):
+    def import_table(self, name, source, fieldnames=None, fieldtypes=None, keepfields=None, dropfields=None, sniffsize=10000, replace=False, verbose=True, **kwargs):
+        # NOTE: argname conflict bw sniffsize for data detection, and sniffsize for TextDelimited for detecting file structure
+        # NOTE: keepfields and dropfields not yet implemented
+        
+        if isinstance(source, basestring):
             # load using format loaders
-            # this should give use
-            # - source iterator
-            # - fieldnames and/or types
-            # ...
-            raise NotImplementedError('Loading from external files not yet supported, but planned')
+            reader = vector.load.from_file(source, **kwargs)
+            source = reader
+            if not fieldnames:
+                fieldnames = reader.fieldnames
+            if not fieldtypes:
+                fieldtypes = reader.fieldtypes
+            meta = reader.meta
 
-
+        # wrap in a progress tracker
+        if verbose:
+            source = track_progress(source, 'Importing table "{}"'.format(name))
 
         # fields are known
         if fieldnames and fieldtypes:
