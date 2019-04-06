@@ -2,6 +2,26 @@
 import pythongis as pg
 import geostream as gs
 
+def view(results, text=False):
+    import pythongis as pg
+    # setup map
+    m = pg.renderer.Map()
+    m.add_layer(r"C:\Users\kimok\Desktop\gazetteer data\raw\ne_10m_admin_0_countries.shp", fillcolor='gray')
+    # options
+    kwargs = {}
+    if text:
+        kwargs.update(text=lambda f: f[text][:20], textoptions=dict(textsize=3))
+    # add
+    d = pg.VectorData(fields=[])
+    for row in results:
+        d.add_feature([], row[-1].__geo_interface__)
+    m.add_layer(d, fillcolor='blue', **kwargs)
+    # view
+    m.view()
+
+
+
+
 TESTFILE = 'casetest.db'
 
 workspace = gs.Workspace(TESTFILE, 'w')
@@ -37,13 +57,50 @@ workspace.import_table('ne_cities', r"C:\Users\kimok\Desktop\gazetteer data\raw\
 #workspace.import_table('ciesin_cities', r"C:\Users\kimok\Desktop\gazetteer data\raw\global_settlement_points_v1.01.shp", replace=True, encoding='latin')
 #workspace.import_table('urban', r"C:\Users\kimok\Desktop\gazetteer data\raw\global_urban_extent_polygons_v1.01.shp", replace=True, encoding='latin')
 #workspace.import_table('gns_raw', r"C:\Users\kimok\Desktop\gazetteer data\raw\Countries_populatedplaces_p.txt", replace=True)
-#workspace.import_table('osm_raw', r"C:\Users\kimok\Desktop\gazetteer data\raw\planet-latest_geonames.tsv", replace=True)
+
+##workspace.import_table('roads', r"C:\Users\kimok\Desktop\misctests\MajorRoads.shp", replace=True)
+##workspace.import_table('mammals', r"C:\Users\kimok\Desktop\misctests\TERRESTRIAL_MAMMALS.shp", replace=True, encoding='latin')
+
+##workspace.import_raster('globcover', r"P:\Freelance\Projects\Henry City Data\Work Files\Sources\GlobCover\GLOBCOVER_L4_200901_200912_V2.3.tif",
+##                        replace=True)
+
+# Large file test
+##print 'large pure approach'
+##import csv
+##import sys
+##from time import time
+##csv.field_size_limit(sys.maxint)
+##with open(r"C:\Users\kimok\Desktop\gazetteer data\raw\planet-latest_geonames.tsv", 'rb') as robj:
+##    robj.seek(0, 2)
+##    end = robj.tell()
+##    robj.seek(0)
+##    reader = csv.reader(robj, delimiter='\t')
+##    for attr in 'delimiter doublequote escapechar lineterminator quotechar quoting skipinitialspace strict'.split():
+##        print attr, repr(getattr(reader.dialect, attr))
+##    fieldnames = next(reader)
+##    print fieldnames
+##    nxt=incr=10000
+##    for i,row in enumerate(reader):
+##        if len(row) != 24:
+##            print len(row)
+##        if i >= nxt:
+##            print robj.tell()/float(end)
+##            nxt+=incr
+##print time()-t, 'seconds'
+##
+##print 'large stream approach'
+##workspace.import_table('osm_raw', r"C:\Users\kimok\Desktop\gazetteer data\raw\planet-latest_geonames.tsv", replace=True,
+##                       doublequote=1, quotechar='"') # autodetect gets it wrong, override
+##
+##fdsfsd
 
 # inspect our workspace
 print 'inspect initial workspace'
 workspace.describe()
 for tab in workspace.tables():
     tab.describe()
+    for field in tab.fieldnames[:3]:
+        tab.describe(field)
 
 # calc some stats
 print 'calc some stats'
@@ -76,6 +133,12 @@ print 'create spindexes'
 for tab in workspace.tables():
     tab.create_spatial_index('geom')
 workspace.describe()
+
+# maybe getting features in a country
+print countries # figure out what fields
+print list(countries.values('NAME')) # get possible country names
+view(cities.intersection('geom', countries.get(where="name='Angola'")[-1].bounds))
+
 # and more...
 # ...
 

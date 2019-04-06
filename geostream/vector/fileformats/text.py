@@ -1,5 +1,8 @@
 
 import csv
+import sys
+
+csv.field_size_limit(sys.maxint)
 
 
 class TextDelimited(object):
@@ -26,7 +29,11 @@ class TextDelimited(object):
                 next(rows)
 
         _fields = next(rows)
-        
+
+        # TODO: This naive parsing is a bit slower than just pure iterating
+        # Instead, do the parsing in import_table() after we have sniffed the data types
+        # This way only tries to convert to the correct column type
+        # Also open file with codec so less overhead from many decode calls
         def parsestring(string):
             try:
                 val = float(string.replace(",","."))
@@ -53,12 +60,13 @@ class TextDelimited(object):
         
         # auto detect delimiter
         # unless specified, only based on first 10 mb, otherwise gets really slow for large files
-        sniffsize = self.kwargs.pop('sniffsize', 10)
+        sniffsize = self.kwargs.pop('sniffdialectsize', 10)
         dialect = csv.Sniffer().sniff(self.fileobj.read(1056*sniffsize)) 
         self.fileobj.seek(0)
 
         # .tsv files are by definition tab-separated
-        dialect.delimiter = '\t'
+        if self.filepath.endswith('.tsv'):
+            dialect.delimiter = '\t'
         
         # overwrite with user input
         for k,v in self.kwargs.items():

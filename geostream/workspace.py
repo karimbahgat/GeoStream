@@ -156,9 +156,9 @@ class Workspace(object):
         self.db.commit()
         return Table(self, name)
 
-    def import_table(self, name, source, fieldnames=None, fieldtypes=None, keepfields=None, dropfields=None, sniffsize=10000, replace=False, verbose=True, **kwargs):
-        # NOTE: argname conflict bw sniffsize for data detection, and sniffsize for TextDelimited for detecting file structure
-        # NOTE: keepfields and dropfields not yet implemented
+    def import_table(self, name, source, fieldnames=None, fieldtypes=None, select=None, keepfields=None, dropfields=None, sniffsize=10000, replace=False, verbose=True, **kwargs):
+        # NOTE: use argname sniffsize for data detection, and sniffdialectsize for TextDelimited for detecting file structure
+        # NOTE: kselect, eepfields and dropfields not yet implemented
         
         if isinstance(source, basestring):
             # load using format loaders
@@ -199,8 +199,8 @@ class Workspace(object):
             fails = 0
             for row in source:
                 try: table.add_row(*row)
-                except:
-                    warnings.warn('One or more rows could not be added due to unknown problems')
+                except Exception as err:
+                    warnings.warn('One or more rows could not be added due to a problem: {}'.format(err))
                     fails += 1
 
         # need to determine fields
@@ -262,15 +262,15 @@ class Workspace(object):
             fails = 0
             for row in sniffsample:
                 try: table.add_row(*row)
-                except:
-                    warnings.warn('One or more rows could not be added due to unknown problems')
+                except Exception as err:
+                    warnings.warn('One or more rows could not be added due to a problem: {}'.format(err))
                     fails += 1
         
             # iterate and add what remains of the source
             for row in source:
                 try: table.add_row(*row)
-                except:
-                    warnings.warn('One or more rows could not be added due to unknown problems')
+                except Exception as err:
+                    warnings.warn('One or more rows could not be added due to a problem: {}'.format(err))
                     fails += 1
 
         if fails > 0:
@@ -278,7 +278,46 @@ class Workspace(object):
 
         return table
 
+    def import_raster(self, name, source, replace=False, verbose=True, **kwargs):
+        
+        if isinstance(source, basestring):
+            # load using format loaders
+            reader = raster.load.from_file(source, **kwargs)
+            source = reader
+            dtype = reader.dtype
+            meta = reader.meta
 
+        if verbose:
+            # by byte position in file
+##            reader.fileobj.seek(0, 2)
+##            end = reader.fileobj.tell()
+##            def filecallback(a,b,c,d):
+##                print reader.fileobj.tell()/float(end)
+##            source = track_progress(source, 'Importing table "{}"'.format(name), callback=filecallback)
+            # by row
+            source = track_progress(source, 'Importing raster "{}"'.format(name))
 
+        # determine dtype by sniffing first tile
+        # ...
+
+        # determine fields
+        fields = []
+        fields += [('rast', 'rast_{}'.format(dtype))]
+
+        # create the table
+        table = self.new_table(name, fields, replace=replace)
+
+        # add the data from the sniffsample
+        fails = 0
+        for row in sniffsample:
+            try: table.add_row(*row)
+            except Exception as err:
+                warnings.warn('One or more rows could not be added due to a problem: {}'.format(err))
+                fails += 1
     
-
+        # iterate and add what remains of the source
+        for row in source:
+            try: table.add_row(*row)
+            except Exception as err:
+                warnings.warn('One or more rows could not be added due to a problem: {}'.format(err))
+                fails += 1

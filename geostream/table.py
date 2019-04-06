@@ -3,6 +3,8 @@ from tempfile import TemporaryFile
 
 from sqlite3 import Binary
 
+from .verbose import track_progress
+
 class Table(object):
     def __init__(self, workspace, name):
         self.name = name
@@ -19,6 +21,7 @@ class Table(object):
             raise Exception('Could not find a table by the name "{}"'.format(name))
 
     def __str__(self):
+        # TODO: Consider building custom sql query to retrieve all info at once
         ident = '  '
         numgeoms = self.get('COUNT(oid)', where='geom IS NOT NULL') if 'geom' in self.fieldnames else 0
         numspindex = self.workspace.table('spatial_indexes').get('COUNT(oid)', where="tbl = '{}'".format(self.name))
@@ -63,8 +66,42 @@ class Table(object):
 
     #### Metadata
 
-    def describe(self):
-        print(self.__str__())
+    def describe(self, field=None):
+        # TODO: Consider building custom sql query to retrieve all info at once
+        if field:
+            ident = '  '
+            typ = next((t for f,t in self.fields if f == field)) #self.fieldtypes[self.fieldnames.index(field)]
+            lines = ['Column Field:',
+                     ident+'Name: "{}"'.format(field),
+                     ident+'Data Type: {}'.format(typ)]
+            
+            if typ == 'geom':
+                spindex = self.workspace.table('spatial_indexes').get('COUNT(oid)', where="tbl = '{}' and fld = '{}'".format(self.name, field))
+                lines += [ident+'Spatial Index'.format(bool(spindex))]
+                # some more too
+                # ...
+            
+            elif typ == 'TEXT':
+                valuecounts = list(self.aggregate('count(oid)', by=field, order=field))[:400] # Limit in case way too many values
+                lines += [ident+'Unique Values ({}):'.format(len(valuecounts))]
+                valuelist = ['{} ({})'.format(val,cnt) for val,cnt in valuecounts]
+                lines += [ident*2 + '\t\t\t'.join(valuelist[i:i+4])
+                          for i in range(0, len(valuelist), 4)]
+                
+            elif typ in ('INT','REAL'):
+                lines += [ident+'Stats: ']
+                stats = 'count min avg max sum'.split()
+                lines += [ident*2 + '\t\t'.join(stats)]
+                statsdef = ['{}({})'.format(stat, field) for stat in stats]
+                statsvals = list(self.aggregate(statsdef))
+                statstrings = ['{:.3f}'.format(val) for val in statsvals]
+                lines += [ident*2 + '\t\t'.join(statstrings) ]
+                
+            descr = '\n'.join(lines)
+            print descr
+            
+        else:
+            print(self.__str__())
 
     #### Reading
 
@@ -84,7 +121,7 @@ class Table(object):
         if where: query += ' WHERE {}'.format(where)
         if limit: query += ' LIMIT {}'.format(limit)
         #print query
-        result = self.workspace.c.execute(query)
+        result = self.workspace.db.cursor().execute(query)
         if len(fields) == 1:
             return (row[0] for row in result)
         else:
@@ -233,6 +270,8 @@ class Table(object):
         # loop unique values
         for u in uniq:
             # wrap unique text values with quotes
+            # TODO: Change this so uses ? and inserts values the safe way
+            # ...
             u = ["'{}'".format(v) if isinstance(v, basestring) else "{}".format(v)
                  for v in u]
             # insert by-fields and unique values into a where query
@@ -278,9 +317,10 @@ class Table(object):
         # execute and return results
         result = self.workspace.c.execute(query)
         if len(stats) == 1:
-            return (row[0] for row in result)
-        else:
-            return result
+            result = (row[0] for row in result)
+        if not by:
+            result = list(result)[0]
+        return result
 
     #### Spatial indexing
 
@@ -288,7 +328,7 @@ class Table(object):
     # incl moving the spatial_indexes memory dict to the new class
     # ...
             
-    def create_spatial_index(self, geofield):
+    def create_spatial_index(self, geofield, verbose=True):
         # create the spatial index
         import rtree
         temppath = TemporaryFile().name
@@ -298,12 +338,12 @@ class Table(object):
 
         # NOTE: Maybe consider using generator as input to Index()
         # but this seems to only be in memory then, and not on file
-        
-        nxt=incr=10000
-        for i,(oid,geom) in enumerate(self.filter(['oid',geofield])):
-            if i>=nxt:
-                print i
-                nxt+=incr
+        geoms = self.filter(['oid',geofield])
+
+        if verbose:
+            geoms = track_progress(geoms, 'Creating Spatial Index for Field "{}" on Table {}'.format(geofield, self.name), total=len(self))
+            
+        for oid,geom in geoms:
             if geom:
                 bbox = geom.bounds
                 spindex.insert(oid, bbox)
