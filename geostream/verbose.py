@@ -39,6 +39,20 @@ def idle_progress(taskname, i, perc, total, elapsed=None):
         sys.stdout.flush()
 
 
+
+def i_to_filepos(i, fileobj, end=None):
+    "Convert i to byte position in file"
+    # SIMPLY INSERT INTO progress() AS ARBITRARY CALLABLE
+    # NOT FINISHED YET...
+    if not end and i == 0:
+        fileobj.seek(0, 2)
+        end = fileobj.tell()
+    i = fileobj.tell()
+    perc = i/float(end)
+    return i, end, perc
+
+
+
 def track_progress(iterator, taskname=None, every=10000, total=None, callback=idle_progress):
     if hasattr(iterator, '__len__'):
         total = len(iterator)

@@ -41,7 +41,7 @@ class Table(object):
         return self.get('COUNT(oid)')
 
     def __iter__(self):
-        return self.filter()
+        return self.select()
 
     #### Hidden
 
@@ -106,10 +106,9 @@ class Table(object):
     #### Reading
 
     def get(self, fields=None, where=None):
-        return next(self.filter(fields, where, limit=1))
+        return next(self.select(fields, where, limit=1))
 
-    def filter(self, fields=None, where=None, limit=None):
-        # Note: Maybe rename to select()?
+    def select(self, fields=None, where=None, limit=None):
         if fields:
             if isinstance(fields, basestring):
                 fields = [fields]
@@ -278,7 +277,7 @@ class Table(object):
             byvals = zip(by, u)
             wherestring = ' AND '.join(['{} = {}'.format(b, v) for b,v in byvals])
             # execute and return unique value with group result
-            group = self.filter(keep_fields, where=wherestring)
+            group = self.select(keep_fields, where=wherestring)
             if len(by) == 1:
                 u = u[0]
             yield u,group
@@ -338,10 +337,10 @@ class Table(object):
 
         # NOTE: Maybe consider using generator as input to Index()
         # but this seems to only be in memory then, and not on file
-        geoms = self.filter(['oid',geofield])
+        geoms = self.select(['oid',geofield])
 
         if verbose:
-            geoms = track_progress(geoms, 'Creating Spatial Index for Field "{}" on Table {}'.format(geofield, self.name), total=len(self))
+            geoms = track_progress(geoms, 'Creating Spatial Index for Field "{}" on Table "{}"'.format(geofield, self.name), total=len(self))
             
         for oid,geom in geoms:
             if geom:
@@ -401,7 +400,7 @@ class Table(object):
         ids = spindex.intersection(bbox)
         #ids = self.spindex.intersect(bbox)
         idstring = ','.join(map(str,ids))
-        return self.filter(where='oid IN ({})'.format(idstring))
+        return self.select(where='oid IN ({})'.format(idstring))
 
 
 

@@ -6,6 +6,7 @@ import warnings
 from itertools import izip, izip_longest
 
 from . import vector
+#from . import raster
 
 from .table import Table
 from .verbose import track_progress
@@ -96,8 +97,11 @@ class Workspace(object):
 
     # Metadata
 
-    def describe(self):
-        print(self.__str__())
+    def describe(self, table=None):
+        if table:
+            self.table(table).describe()
+        else:
+            print(self.__str__())
 
     # Tables
 
@@ -297,12 +301,9 @@ class Workspace(object):
             # by row
             source = track_progress(source, 'Importing raster "{}"'.format(name))
 
-        # determine dtype by sniffing first tile
-        # ...
-
         # determine fields
         fields = []
-        fields += [('rast', 'rast_{}'.format(dtype))]
+        fields += [('rast', 'rast')]
 
         # create the table
         table = self.new_table(name, fields, replace=replace)

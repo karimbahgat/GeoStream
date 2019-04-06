@@ -26,6 +26,11 @@ class Spatial_Index_Manager:
 class RTreeIndex:
     pass
 
+class PyramidIndex:
+    pass
+
+# Backends
+
 class _RTreeBackend:
     pass
 
@@ -37,3 +42,11 @@ class QuadTreeIndex:
 
 class _PyqtreeBackend:
     pass
+
+class _PyramidTableBackend:
+    pass
+
+
+
+
+
