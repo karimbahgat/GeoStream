@@ -53,12 +53,15 @@ def i_to_filepos(i, fileobj, end=None):
 
 
 
-def track_progress(iterator, taskname=None, every=10000, total=None, callback=idle_progress):
+def track_progress(iterator, taskname=None, every=None, total=None, callback=idle_progress):
     if hasattr(iterator, '__len__'):
         total = len(iterator)
     
     if not every and total:
-        every = total / 100.0 # every 1 percent
+        every = total / 10.0 # every 1 percent
+
+    if not every:
+        every = 10000
 
     if total:
         perc = 0

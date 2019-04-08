@@ -21,7 +21,6 @@ def view(results, text=False):
 
 
 
-
 TESTFILE = 'casetest.db'
 
 workspace = gs.Workspace(TESTFILE, 'w')
@@ -61,8 +60,9 @@ workspace.import_table('ne_cities', r"C:\Users\kimok\Desktop\gazetteer data\raw\
 ##workspace.import_table('roads', r"C:\Users\kimok\Desktop\misctests\MajorRoads.shp", replace=True)
 ##workspace.import_table('mammals', r"C:\Users\kimok\Desktop\misctests\TERRESTRIAL_MAMMALS.shp", replace=True, encoding='latin')
 
-##workspace.import_raster('globcover', r"P:\Freelance\Projects\Henry City Data\Work Files\Sources\GlobCover\GLOBCOVER_L4_200901_200912_V2.3.tif",
-##                        replace=True)
+##reader = gs.raster.load.file_reader(r"P:\Freelance\Projects\Henry City Data\Work Files\Sources\GlobCover\GLOBCOVER_L4_200901_200912_V2.3.tif")
+##print reader
+##fdsfd
 
 # Large file test
 ##print 'large pure approach'

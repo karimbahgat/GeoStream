@@ -6,7 +6,7 @@ import warnings
 from itertools import izip, izip_longest
 
 from . import vector
-#from . import raster
+from . import raster
 
 from .table import Table
 from .verbose import track_progress
@@ -282,14 +282,20 @@ class Workspace(object):
 
         return table
 
-    def import_raster(self, name, source, replace=False, verbose=True, **kwargs):
+    def import_raster(self, name, source,
+                      tilesize=None, tiles=None,
+                      replace=False, verbose=True, **kwargs):
         
         if isinstance(source, basestring):
             # load using format loaders
-            reader = raster.load.from_file(source, **kwargs)
-            source = reader
-            dtype = reader.dtype
-            meta = reader.meta
+            rast = raster.data.Raster(source, **kwargs)
+
+##            if nodataval is not None:
+##                # override nodatavals (same for all bands)
+##                for band in rast:
+##                    band.nodataval = nodataval
+
+            source = rast.tiled(tilesize, tiles)
 
         if verbose:
             # by byte position in file
@@ -307,18 +313,32 @@ class Workspace(object):
 
         # create the table
         table = self.new_table(name, fields, replace=replace)
-
-        # add the data from the sniffsample
-        fails = 0
-        for row in sniffsample:
-            try: table.add_row(*row)
-            except Exception as err:
-                warnings.warn('One or more rows could not be added due to a problem: {}'.format(err))
-                fails += 1
     
         # iterate and add what remains of the source
-        for row in source:
-            try: table.add_row(*row)
-            except Exception as err:
-                warnings.warn('One or more rows could not be added due to a problem: {}'.format(err))
+        fails = 0
+        for tile in source:
+            if 1:
+                #print tile
+                if isinstance(tile, raster.data.Raster):
+                    # means raster was already loaded from file
+                    rast = tile
+                else:
+                    # means user provided iterator of array lists (one list per raster, with one or more band arrays)
+                    # all rasters will be given the same affine transform
+                    width, height = tile[0].shape
+                    rast = raster.data.Raster(None, width, height, affine)
+                    for bandarr in tile:
+                        dtype = bandarr.dtype
+                        rast.add_band(bandarr, dtype, width, height, nodataval)
+                        
+                table.add_row(rast)
+                
+            if 0: #except Exception as err:
+                warnings.warn('One or more tiles could not be added due to a problem: {}'.format(err))
                 fails += 1
+
+        if fails > 0:
+            warnings.warn('A total of {} of tiles could not be imported due to unknown problems'.format(fails))
+
+        return table
+                

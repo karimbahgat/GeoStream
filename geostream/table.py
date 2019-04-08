@@ -338,13 +338,24 @@ class Table(object):
         # NOTE: Maybe consider using generator as input to Index()
         # but this seems to only be in memory then, and not on file
         geoms = self.select(['oid',geofield])
+##        i = 0
+##        for g in geoms:
+##            print g
+##            i+=1
+##        print i
+##        fdsf
 
         if verbose:
             geoms = track_progress(geoms, 'Creating Spatial Index for Field "{}" on Table "{}"'.format(geofield, self.name), total=len(self))
             
         for oid,geom in geoms:
             if geom:
-                bbox = geom.bounds
+                bbox = geom.bounds if hasattr(geom, 'bound') else geom.bbox
+                # ensure min,min,max,max pattern
+                xs = bbox[0],bbox[2]
+                ys = bbox[1],bbox[3]
+                bbox = [min(xs),min(ys),max(xs),max(ys)]
+                # insert
                 spindex.insert(oid, bbox)
                 
         # add new entry to the spatial index table

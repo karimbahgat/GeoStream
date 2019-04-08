@@ -1,6 +1,7 @@
 
 import sqlite3
 from sqlite3 import Binary
+from io import BytesIO
 
 from .data import Raster
 from .load import from_wkb
@@ -14,7 +15,7 @@ def rast_to_wkb(rast):
 
 def from_wkb_buffer(wkb_buf):
     # wkb buffer to raster
-    rast = from_wkb(bytes(wkb_buf))
+    rast = from_wkb(BytesIO(bytes(wkb_buf)))
     return rast
 
 
