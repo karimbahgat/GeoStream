@@ -8,6 +8,8 @@ from itertools import izip, izip_longest
 from . import vector
 from . import raster
 
+from . import stats
+
 from .table import Table
 from .verbose import track_progress
 
@@ -21,8 +23,19 @@ class Workspace(object):
 
     def _connect(self):
         # connect to db
-        self.db = sqlite3.connect(self.path, detect_types=sqlite3.PARSE_DECLTYPES)
+        if self.mode == 'w':
+            self.db = sqlite3.connect(self.path, detect_types=sqlite3.PARSE_DECLTYPES)
+        elif self.mode == 'r':
+            if os.path.exists(self.path):
+                self.db = sqlite3.connect(self.path, detect_types=sqlite3.PARSE_DECLTYPES)
+                self.db.cursor().execute('pragma query_only = ON')
+            else:
+                raise Exception('No such database file path: "{}".'.format(self.path))
+            
         self.c = self.db.cursor()
+
+        # register custom functions
+        stats.register_funcs(self.db)
 
         # connect to spatial indexes, if any
         self.spatial_indexes = dict() # where they are stored when loaded in memory
@@ -107,14 +120,14 @@ class Workspace(object):
 
     @property
     def tablenames(self):
-        names = [row[0] for row in self.c.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+        names = [row[0] for row in self.db.cursor().execute("SELECT name FROM sqlite_master WHERE type='table'")]
         metanames = self.metatablenames
         names = [n for n in names if n not in metanames]
         return tuple(names)
 
     @property
     def metatablenames(self):
-        names = [row[0] for row in self.c.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+        names = [row[0] for row in self.db.cursor().execute("SELECT name FROM sqlite_master WHERE type='table'")]
         metanames = ('spatial_indexes',)
         names = [n for n in names if n in metanames]
         return tuple(names)
@@ -131,7 +144,7 @@ class Workspace(object):
     def new_table(self, name, fields, replace=False):
         # drop existing table if exists
         if replace:
-            self.c.execute('DROP TABLE IF EXISTS {}'.format(name))
+            self.db.cursor().execute('DROP TABLE IF EXISTS {}'.format(name))
 
         # to save heartache later, auto replace problematic fieldname characters like underscore, period, etc.
         def clean(name):
@@ -156,9 +169,15 @@ class Workspace(object):
         
         # create table
         fieldstring = ', '.join(['{} {}'.format(fn,typ) for fn,typ in fields])
-        self.c.execute('''CREATE TABLE {name} ({fieldstring})'''.format(name=name, fieldstring=fieldstring))
+        self.db.cursor().execute('''CREATE TABLE {name} ({fieldstring})'''.format(name=name, fieldstring=fieldstring))
         self.db.commit()
         return Table(self, name)
+
+    def drop_table(self, name, confirm=False):
+        if confirm and self.mode == 'w':
+            self.db.cursor().execute('DROP TABLE {}'.format(name))
+        else:
+            raise Exception('To delete this table ({}) you must set confirm = True'.format(name))
 
     def import_table(self, name, source, fieldnames=None, fieldtypes=None, select=None, keepfields=None, dropfields=None, sniffsize=10000, replace=False, verbose=True, **kwargs):
         # NOTE: use argname sniffsize for data detection, and sniffdialectsize for TextDelimited for detecting file structure

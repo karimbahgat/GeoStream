@@ -271,7 +271,7 @@ def write_wkb_raster(bands, width, height, affine, srid=4326):
     # | height        | uint16      | number of pixel rows         |
     # +---------------+-------------+------------------------------+
     version = 0
-    ipX, scaleX, skewX, ipY, scaleY, skewY = affine
+    scaleX, skewX, ipX, skewY, scaleY, ipY = affine
     wkb += pack(endian + 'HHddddddIHH', version, len(bands), scaleX, scaleY, ipX, ipY, skewX, skewY, srid, width, height)
 
     for band in bands:

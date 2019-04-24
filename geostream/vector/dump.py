@@ -21,22 +21,21 @@ def detect_filetype(filepath):
         return None
 
 
-def from_file(filepath, **kwargs):
+def to_file(filepath, fields, data, **kwargs):
     filetype = detect_filetype(filepath)
     
     if filetype in ('CSV','TSV','Text-Delimited'):
-        reader = fileformats.TextDelimited(filepath, **kwargs)
+        fileformats.TextDelimited.dump(filepath, fields, data, **kwargs)
 
     elif filetype == 'Shapefile':
-        reader = fileformats.Shapefile(filepath, **kwargs)
+        fileformats.Shapefile.dump(filepath, fields, data, **kwargs)
 
     elif filetype == 'GeoJSON':
-        reader = fileformats.GeoJSON(filepath, **kwargs)
+        fileformats.GeoJSON.dump(filepath, fields, data, **kwargs)
 
     elif filetype == 'Excel 97':
-        reader = fileformats.Excel97(filepath, **kwargs)
+        fileformats.Excel97.dump(filepath, fields, data, **kwargs)
 
     else:
-        raise Exception("Could not import data from the given filepath: the filetype extension is either missing or not supported")
+        raise Exception("Could not export data to the given filepath: the filetype extension is either missing or not supported")
 
-    return reader

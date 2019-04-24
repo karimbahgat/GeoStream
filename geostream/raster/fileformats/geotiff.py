@@ -109,7 +109,7 @@ class GeoTIFF(object):
                 xskew = 0
                 yskew = 0
 
-            return xoff, xscale, xskew, yoff, yscale, yskew
+            return xscale, xskew, xoff, yskew, yscale, yoff
 
         if 0:
             # if no geotiff tag info look for world file transform coefficients

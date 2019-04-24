@@ -34,7 +34,7 @@ def from_wkb(wkb):
     from .data import Raster
     rast_dct = read_wkb_raster(wkb)
     width, height = rast_dct['width'], rast_dct['height']
-    affine = [rast_dct[k] for k in 'ipX scaleX skewX ipY scaleY skewY'.split()]
+    affine = [rast_dct[k] for k in 'scaleX skewX ipX skewY scaleY ipY'.split()]
     rast = Raster(None, width, height, affine)
     dtypes = ['bool', None, None, 'int8', 'uint8', 'int16', 'uint16', 'int32', 'uint32', 'float32', 'float64']
     for band_dct in rast_dct['bands']:

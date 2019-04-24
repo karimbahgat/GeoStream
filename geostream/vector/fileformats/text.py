@@ -1,6 +1,7 @@
 
 import csv
 import sys
+import io
 
 csv.field_size_limit(sys.maxint)
 
@@ -54,6 +55,41 @@ class TextDelimited(object):
         
         rowgeoms = ((row,None) for row in rows)
         return rowgeoms
+
+    @staticmethod
+    def dump(filepath, fields, data, encoding='utf8', **kwargs):
+        # use excel dialect by default
+        dialect = csv.excel
+        
+        # .tsv files are by definition tab-separated
+        if filepath.endswith('.tsv'):
+            dialect.delimiter = '\t'
+        else:
+            dialect.delimiter = ','
+        
+        # overwrite with user input
+        for k,v in kwargs.items():
+            setattr(dialect, k, v)
+
+        # determine field conversions
+        fieldnames,fieldtypes = zip(*fields)
+        fieldtypes = [typ.lower() for typ in fieldtypes]
+        def typfunc(typ):
+            if typ == 'text':
+                return lambda v: v.encode(encoding)
+            else:
+                return lambda v: v
+        fieldfuncs = [typfunc(typ) for typ in fieldtypes]
+
+        # write to file
+        with open(filepath, "wb") as fobj:
+            writer = csv.writer(fobj, dialect)
+            print fieldnames
+            writer.writerow([f.encode(encoding) for f in fieldnames])
+            for row in data:
+                row = [v if v is None else encode(v)
+                       for v,encode in zip(row,fieldfuncs)]
+                writer.writerow(row)
 
     def load_reader(self):
         self.fileobj = open(self.filepath, "rb")

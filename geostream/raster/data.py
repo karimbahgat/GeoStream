@@ -1,6 +1,8 @@
 
 import numpy as np
 
+from affine import Affine
+
 from .load import file_reader
 
 from wkb_raster import write_wkb_raster
@@ -89,7 +91,7 @@ class Raster(object):
         
         self.width = width
         self.height = height
-        self.affine = affine
+        self.affine = Affine(*affine)
         self.kwargs = kwargs
 
     def __repr__(self):
@@ -100,10 +102,24 @@ class Raster(object):
 
     @property
     def bbox(self):
-        xoff,xscale,xskew,yoff,yscale,yskew = self.affine
-        x1,y1 = xoff,yoff
-        x2,y2 = x1 + self.width * xscale, y1 + self.height * yscale
-        return [x1,y1,x2,y2]
+        #xoff,xscale,xskew,yoff,yscale,yskew = self.affine
+        #x1,y1 = xoff,yoff
+        #x2,y2 = x1 + self.width * xscale, y1 + self.height * yscale
+        px1,py1,px2,py2 = (0, 0, self.width+1, self.height+1)
+        x1,y1 = self.cell_to_geo(px1,py1)
+        x2,y2 = self.cell_to_geo(px2,py2)
+        return (x1,y1,x2,y2)
+
+    def cell_to_geo(self, px, py):
+        x,y = self.affine * (py,px)
+        return (x,y)
+
+    def geo_to_cell(self, x, y):
+        x,y = ~self.affine * (py,px)
+        return (x,y)
+
+    def band(self, i):
+        return self.bands[i]
 
     def add_band(self, *args, **kwargs):
         if args and isinstance(args[0], Band):
@@ -150,14 +166,14 @@ class Raster(object):
         px1,py1,px2,py2 = bbox
         pw,ph = px2-px1, py2-py1
 
-        xoff,xscale,xskew,yoff,yscale,yskew = list(self.affine)
+        xscale,xskew,xoff,yskew,yscale,yoff,_,_,_ = list(self.affine)
         xoff += px1 * xscale
         yoff += py1 * yscale
 
         px2, py2 = min(px1+pw, self.width), min(py1+ph, self.height)
         pw, ph = px2-px1, py2-py1
         
-        rast = Raster(None, pw, ph, [xoff,xscale,xskew,yoff,yscale,yskew])
+        rast = Raster(None, pw, ph, [xscale,xskew,xoff,yskew,yscale,yoff])
         for band in self.bands:
             cropped_band = band.crop([px1, py1, px2, py2])
             rast.add_band(cropped_band)
@@ -169,5 +185,5 @@ class Raster(object):
         wkb = write_wkb_raster(band_dicts,
                                self.width,
                                self.height,
-                               self.affine)
+                               list(self.affine)[:6])
         return wkb

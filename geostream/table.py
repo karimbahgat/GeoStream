@@ -1,18 +1,21 @@
 
+import os
 from tempfile import TemporaryFile
 
 from sqlite3 import Binary
 
 from .verbose import track_progress
+from . import vector
+from . import raster
 
 class Table(object):
-    def __init__(self, workspace, name):
+    def __init__(self, workspace, name, mode='r'):
         self.name = name
 
         from . import Workspace
         if not isinstance(workspace, Workspace):
             if isinstance(workspace, basestring):
-                workspace = Workspace(workspace)
+                workspace = Workspace(workspace, mode=mode)
             else:
                 raise Exception('Table "workspace" arg must be a Workspace instance or a filepath to a db file.')
         self.workspace = workspace
@@ -24,20 +27,30 @@ class Table(object):
         # TODO: Consider building custom sql query to retrieve all info at once
         ident = '  '
         numgeoms = self.get('COUNT(oid)', where='geom IS NOT NULL') if 'geom' in self.fieldnames else 0
-        numspindex = self.workspace.table('spatial_indexes').get('COUNT(oid)', where="tbl = '{}'".format(self.name))
+        numspindex = self.workspace.table('spatial_indexes').get('COUNT(oid)', where="tbl = '{}'".format(self.name)) if 'spatial_indexes' in self.workspace.tablenames else 0
         lines = ['Streaming Table:',
                  ident+'Name: "{}"'.format(self.name),
                  ident+'Rows ({})'.format(len(self)),
-                 ident+'Geometries ({})'.format(numgeoms),
+                 ident+'Geometries ({})'.format(bool(numgeoms)),
                  ident+'Spatial Indexes ({})'.format(numspindex),
                  ident+'Fields ({})'.format(len(self.fieldnames))]
-        fieldlist = ['{} ({})'.format(name,typ) for name,typ in self.fields]
-        lines += [ident*2 + '\t\t\t'.join(fieldlist[i:i+4])
+        fields = list(self.fields)
+        maxlen = 25
+        fields = [(name[:maxlen-len(str(typ))-3-3]+u'...',typ) if (len(name)+len(str(typ))+3) > maxlen else (name,typ)
+                       for name,typ in fields] # limit display length of individual fieldnames
+        fieldlist = ['{} ({})'.format(name,typ) for name,typ in fields]
+        fieldlist = [v.ljust(maxlen) for v in fieldlist]
+        lines += [ident*2 + '\t\t'.join(fieldlist[i:i+4])
                   for i in range(0, len(fieldlist), 4)]
         descr = '\n'.join(lines)
         return descr
 
     def __len__(self):
+        # this is sometimes insanely slow for very large tables
+        # alternatively iterate through oid with enumerator
+        #for i,_ in enumerate(self.select('oid')):
+        #    pass
+        #return i
         return self.get('COUNT(oid)')
 
     def __iter__(self):
@@ -47,12 +60,12 @@ class Table(object):
 
     def _column_info(self):
         # cid,name,typ,notnull,default,pk
-        return list(self.workspace.c.execute('PRAGMA table_info({})'.format(self.name)))
+        return list(self.workspace.db.cursor().execute('PRAGMA table_info({})'.format(self.name)))
 
     #### Fields
 
     def add_field(self, field, typ):
-        self.workspace.c.execute('ALTER TABLE {name} ADD {field} {typ}'.format(name=self.name, field=field, typ=typ))
+        self.workspace.db.cursor().execute('ALTER TABLE {name} ADD {field} {typ}'.format(name=self.name, field=field, typ=typ))
 
     @property
     def fields(self):
@@ -66,34 +79,42 @@ class Table(object):
 
     #### Metadata
 
-    def describe(self, field=None):
+    def describe(self, field=None, **kwargs):
         # TODO: Consider building custom sql query to retrieve all info at once
         if field:
             ident = '  '
             typ = next((t for f,t in self.fields if f == field)) #self.fieldtypes[self.fieldnames.index(field)]
+            typ = typ.lower()
             lines = ['Column Field:',
-                     ident+'Name: "{}"'.format(field),
-                     ident+'Data Type: {}'.format(typ)]
+                     ident+u'Name: "{}"'.format(field),
+                     ident+u'Data Type: {}'.format(typ)]
             
             if typ == 'geom':
                 spindex = self.workspace.table('spatial_indexes').get('COUNT(oid)', where="tbl = '{}' and fld = '{}'".format(self.name, field))
-                lines += [ident+'Spatial Index'.format(bool(spindex))]
+                lines += [ident+'Spatial Index: {}'.format(bool(spindex))]
                 # some more too
                 # ...
             
-            elif typ == 'TEXT':
-                valuecounts = list(self.aggregate('count(oid)', by=field, order=field))[:400] # Limit in case way too many values
+            elif typ == 'text':
+                # TODO: Maybe order by most common counts first, instead of alphabetical
+                valuecounts = list(self.aggregate('count(oid)', by=field, order=field, **kwargs))
                 lines += [ident+'Unique Values ({}):'.format(len(valuecounts))]
-                valuelist = ['{} ({})'.format(val,cnt) for val,cnt in valuecounts]
-                lines += [ident*2 + '\t\t\t'.join(valuelist[i:i+4])
+                maxlen = 25
+                valuecounts = [(val[:maxlen-len(str(cnt))-3-3]+u'...',cnt) if (len(val)+len(str(cnt))+3) > maxlen else (val.ljust(maxlen-len(str(cnt))-3),cnt)
+                               for val,cnt in valuecounts] # limit length of individual values
+                valuelist = [u'{} ({})'.format(val,cnt) for val,cnt in valuecounts[:400]] 
+                lines += [ident*2 + '\t\t'.join(valuelist[i:i+4])
                           for i in range(0, len(valuelist), 4)]
+                if len(valuecounts) > 400:
+                    # Limit in case way too many values
+                    lines += [ident*2 + '...and {} more results not displayed here'.format(len(valuecounts)-400)] 
                 
-            elif typ in ('INT','REAL'):
+            elif typ in ('int','real'):
                 lines += [ident+'Stats: ']
                 stats = 'count min avg max sum'.split()
                 lines += [ident*2 + '\t\t'.join(stats)]
                 statsdef = ['{}({})'.format(stat, field) for stat in stats]
-                statsvals = list(self.aggregate(statsdef))
+                statsvals = list(self.aggregate(statsdef, **kwargs))
                 statstrings = ['{:.3f}'.format(val) for val in statsvals]
                 lines += [ident*2 + '\t\t'.join(statstrings) ]
                 
@@ -108,28 +129,39 @@ class Table(object):
     def get(self, fields=None, where=None):
         return next(self.select(fields, where, limit=1))
 
-    def select(self, fields=None, where=None, limit=None):
+    def select(self, fields=None, where=None, limit=None, output=False, replace=False):
         if fields:
             if isinstance(fields, basestring):
                 fields = [fields]
             fieldstring = ','.join(fields)
         else:
-            fields = []
+            fields = ['*']
             fieldstring = '*'
         query = 'SELECT {} FROM {}'.format(fieldstring, self.name)
-        if where: query += ' WHERE {}'.format(where)
+        if where: query += u' WHERE {}'.format(where)
         if limit: query += ' LIMIT {}'.format(limit)
         #print query
         result = self.workspace.db.cursor().execute(query)
-        if len(fields) == 1:
-            return (row[0] for row in result)
+        if output:
+            # create new table
+            if fields[0] == '*':
+                fields = list(self.fields)
+            else:
+                fieldnames,fieldtypes = zip(*self.fields)
+                fields = [(fn, fieldtypes[fieldnames.index(fn)]) for fn in fields]
+                
+            table = self.workspace.new_table(output, fields, replace=replace)
+            for row in result:
+                table.add_row(*row)
+            return table
+
         else:
-            return result
+            if len(fields) == 1 and fields[0] != '*':
+                return (row[0] for row in result)
+            else:
+                return result
 
     #### Writing
-
-    def add_field(self, name, type):
-        self.workspace.c.execute('ALTER TABLE {table} ADD {field} {type}'.format(table=self.name, field=name, type=type))
 
     def add_row(self, *row, **kw):
         if row:
@@ -149,9 +181,9 @@ class Table(object):
         valuestring = ', '.join(('{} = ?'.format(col) for col in cols))
         query = 'UPDATE {} SET {}'.format(self.name, valuestring)
         
-        if where: query += ' WHERE {}'.format(where)
+        if where: query += u' WHERE {}'.format(where)
         
-        self.workspace.c.execute(query, vals)
+        self.workspace.db.cursor().execute(query, vals)
 
     def recode(self, field, **conditions):
         # Setting to multiple constant values depending on conditions
@@ -164,15 +196,42 @@ class Table(object):
         query = 'UPDATE {}'.format(self.name)
         query += ' SET {} = ({})'.format(field, whenstring)
         
-        self.workspace.c.execute(query, vals)
+        self.workspace.db.cursor().execute(query, vals)
 
     def compute(self, **expressions):
-        # Setting to expressions, same as set() under the hood
-        self.set(**expressions)
+        # Setting to expressions
+        where = expressions.pop('where', None)
+        verbose = expressions.pop('verbose', True)
+
+        cursor = self.workspace.db.cursor()
+        exprstring = ', '.join(('{} = {}'.format(col,expr) for col,expr in expressions.items()))
+
+        # prepare loop incl progress tracking
+        loop = self.select('oid', where=where)
+        if verbose:
+            if where:
+                total = self.get('COUNT(oid)', where=where)
+            else:
+                total = len(self)
+            loop = track_progress(loop, 'Computing values', total=total)
+
+        # loop and perform calculations
+        for oid in loop:
+            query = 'UPDATE {} SET {} WHERE OID = {}'.format(self.name, exprstring, oid)
+            cursor.execute(query)
+        cursor.close()
+        
+        #valuestring = ', '.join(('{col} = (SELECT OID,{expr} FROM {table} AS calculated WHERE {table}.OID = calculated.OID)'.format(col=col, expr=expr, table=self.name) for col,expr in expressions.items()))
+        #query = 'UPDATE {} SET {}'.format(self.name, valuestring)
+        #query += ' WHERE OID IN (SELECT OID FROM {})'.format(self.name)
+        # 'update natearth set calcarea = (SELECT ST_GEO_AREA(geom) FROM natearth AS calculated WHERE natearth.OID = calculated.OID)'        
+        #if where: query += ' AND {}'.format(where)
+        #print query
+        #self.workspace.c.execute(query)
 
     #### Manipulations
 
-    def join(self, other, conditions, keep_fields=None, keep_all=True, output=False):
+    def join(self, other, conditions, keep_fields=None, keep_all=True, output=False, replace=False):
         # wrap single args in lists
         if isinstance(conditions, basestring):
             conditions = [conditions]
@@ -192,12 +251,12 @@ class Table(object):
             jointype = 'INNER JOIN'
 
         # construct query
-        conditionstring = ', '.join(conditions)
-        query = 'SELECT {fields} FROM {left} {jointype} {right} WHERE {conditions}'.format(fields=keep_fieldstring,
-                                                                                           left=self.name,
-                                                                                           jointype=jointype,
-                                                                                           right=other.name,
-                                                                                           conditions=conditionstring)
+        conditionstring = ' AND '.join(conditions)
+        query = 'SELECT {fields} FROM {left} AS left {jointype} {right} AS right ON {conditions}'.format(fields=keep_fieldstring,
+                                                                                                           left=self.name,
+                                                                                                           jointype=jointype,
+                                                                                                           right=other.name,
+                                                                                                           conditions=conditionstring)
 
         # execute query
         result = self.workspace.db.cursor().execute(query)
@@ -213,13 +272,20 @@ class Table(object):
                 fields = [(f,typ) for f,typ in fields if f in keep_fields]
 
             # create new table
-            table = self.workspace.new_table(output, fields)
+            table = self.workspace.new_table(output, fields, replace=replace)
             for row in result:
                 table.add_row(*row)
             return table
         else:
             # iterate through result
+            if keep_fields:
+                result = (row[0] for row in result)
             return result
+
+    def reshape(self, columns, fields):
+        # https://stackoverflow.com/questions/2444708/sqlite-long-to-wide-formats
+        # ...
+        pass
         
     #### Stats
 
@@ -235,7 +301,7 @@ class Table(object):
         query = 'SELECT DISTINCT {} FROM {}'.format(fieldstring, self.name)
         
         # where query
-        if where: query += ' WHERE {}'.format(where)
+        if where: query += u' WHERE {}'.format(where)
 
         # limit query
         if limit: query += ' LIMIT {}'.format(limit)
@@ -246,7 +312,7 @@ class Table(object):
             query += ' ORDER BY {}'.format(ordstring)
 
         # execute and return results
-        result = self.workspace.c.execute(query)
+        result = self.workspace.db.cursor().execute(query)
         if len(fields) == 1:
             return (row[0] for row in result)
         else:
@@ -301,7 +367,7 @@ class Table(object):
         
         # where query
         if where:
-            query += ' WHERE {}'.format(where)
+            query += u' WHERE {}'.format(where)
             
         # by query
         if by:
@@ -314,12 +380,27 @@ class Table(object):
             query += ' ORDER BY {}'.format(ordstring)
 
         # execute and return results
-        result = self.workspace.c.execute(query)
+        result = self.workspace.db.cursor().execute(query)
         if len(stats) == 1:
             result = (row[0] for row in result)
         if not by:
             result = list(result)[0]
         return result
+
+    #### Indexing
+
+    def create_index(self, fields, name=None):
+        # wrap single args in lists
+        if isinstance(fields, basestring):
+            fields = [fields]
+        # auto create index name if not specified
+        if not name:
+            fieldstring = '_'.join(fields)
+            name = '{}_{}'.format(self.name, fieldstring)
+        # construct query and execute
+        fieldstring = ', '.join(fields)
+        query = 'CREATE INDEX {} ON {} ({})'.format(name, self.name, fieldstring)
+        self.workspace.db.cursor().execute(query)
 
     #### Spatial indexing
 
@@ -350,7 +431,7 @@ class Table(object):
             
         for oid,geom in geoms:
             if geom:
-                bbox = geom.bounds if hasattr(geom, 'bound') else geom.bbox
+                bbox = geom.bounds if hasattr(geom, 'bounds') else geom.bbox
                 # ensure min,min,max,max pattern
                 xs = bbox[0],bbox[2]
                 ys = bbox[1],bbox[3]
@@ -369,16 +450,21 @@ class Table(object):
         else:
             # load idx and dat blob data
             idxtable = self.workspace.table('spatial_indexes')
+            print 'retrieving idx and dat binary strings from db'
             (idx,dat) = idxtable.get(['rtree_idx','rtree_dat'], where="tbl = '{}' AND col = '{}' ".format(self.name, geofield))
             # write to temp file
             temppath = TemporaryFile().name
             with open(temppath+'.idx', 'wb') as fobj:
+                print 'placing .idx on disk'
                 fobj.write(idx)
             with open(temppath+'.dat', 'wb') as fobj:
+                print 'placing .dat on disk'
                 fobj.write(dat)
             import rtree
             # load index from temp file
+            print 'creating rtree from files'
             spindex = rtree.index.Index(temppath)
+            print 'created'
             spindex._temppath = temppath
             # update spatial_indexes dict
             self.workspace.spatial_indexes[(self.name,geofield)] = spindex
@@ -393,12 +479,15 @@ class Table(object):
             idx = Binary(fobj.read())
         with open(temppath+'.dat', 'rb') as fobj:
             dat = Binary(fobj.read())
+        # delete the temporary files from disk
+        os.remove(temppath+'.idx')
+        os.remove(temppath+'.dat')
         # update the idx and dat columns in the spatial_indexes table
         idxtable = self.workspace.table('spatial_indexes')
         idxtable.set(rtree_idx=idx, rtree_dat=dat,
                      where="tbl = '{}' AND col = '{}' ".format(self.name, geofield))
 
-    def intersection(self, geofield, bbox):
+    def intersection(self, geofield, bbox, fields=None):
         #if not hasattr(self, "spindex"):
         #    raise Exception("You need to create the spatial index before you can use this method")
         # ensure min,min,max,max pattern
@@ -411,8 +500,13 @@ class Table(object):
         ids = spindex.intersection(bbox)
         #ids = self.spindex.intersect(bbox)
         idstring = ','.join(map(str,ids))
-        return self.select(where='oid IN ({})'.format(idstring))
+        return self.select(fields=fields, where='oid IN ({})'.format(idstring))
 
-
+    # Exporting
+    def dump(self, filepath, **kwargs):
+        # TODO: Need option to choose which geom or raster field (for now just assume pure table)
+        fields = [(name,typ) for name,typ in self.fields if typ not in ('geom','rast')]
+        data = self.select(fields=[name for name,typ in fields])
+        vector.dump.to_file(filepath, fields, data, **kwargs)
 
 

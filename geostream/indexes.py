@@ -44,6 +44,7 @@ class _PyqtreeBackend:
     pass
 
 class _PyramidTableBackend:
+    # see https://www.researchgate.net/publication/311423420_An_Efficient_Tile-Pyramids_Building_Method_for_Fast_Visualization_of_Massive_Geospatial_Raster_Datasets
     pass
 
 

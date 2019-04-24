@@ -53,9 +53,9 @@ class GDALRaster(object):
         return self.reader.RasterCount
 
     def load_affine(self):
-        xoff,xscale,xskew,yoff,yskew,yscale = self.reader.GetGeoTransform()
         # gdal uses a slightly different affine sequence so we switch here
-        affine = xoff,xscale,xskew,yoff,yscale,yskew
+        xoff,xscale,xskew,yoff,yskew,yscale = self.reader.GetGeoTransform()
+        affine = xscale,xskew,xoff,yskew,yscale,yoff
         return affine
         
     def load_pixeltype(self):
