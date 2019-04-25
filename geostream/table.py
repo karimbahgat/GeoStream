@@ -394,10 +394,14 @@ class Table(object):
 
     @property
     def indexes(self):
-        res = self.workspace.db.cursor().execute("SELECT * FROM SQLite_master WHERE type = 'index' AND tbl_name = 'data'")
-        return [r[1] for r in res] # return names of indexes
+        res = self.workspace.db.cursor().execute("SELECT * FROM SQLite_master WHERE type = 'index' AND tbl_name = '{}'".format(self.name))
+        return list(res)
 
-    def create_index(self, fields, name=None, replace=False, nocase=False):
+    @property
+    def indexnames(self):
+        return [r[1] for r in self.indexes] # return names of indexes
+
+    def create_index(self, fields, name=None, replace=False, lower=False): #nocase=False):
         # wrap single args in lists
         if isinstance(fields, basestring):
             fields = [fields]
@@ -406,12 +410,12 @@ class Table(object):
             fieldstring = '_'.join(fields)
             name = '{}_{}'.format(self.name, fieldstring)
         # drop if exists
-        if replace and name in self.indexes:
+        if replace and name in self.indexnames:
             self.drop_index(fields, name)
         # construct query and execute
+        if lower: fields = ['lower({})'.format(f) for f in fields]
         fieldstring = ', '.join(fields)
-        if nocase:
-            fieldstring += ' COLLATE NOCASE'
+        #if nocase: fieldstring += ' COLLATE NOCASE'
         query = 'CREATE INDEX {} ON {} ({})'.format(name, self.name, fieldstring)
         self.workspace.db.cursor().execute(query)
 
