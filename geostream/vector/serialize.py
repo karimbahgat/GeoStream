@@ -4,7 +4,7 @@ from sqlite3 import Binary
 
 from shapely.wkb import loads as wkb_loads
 from shapely.geometry import shape
-from shapely.geometry.base import BaseGeometry
+from shapely.geometry import Point, MultiPoint, LineString, MultiLineString, Polygon, MultiPolygon
 
 
 def shapely_to_wkb(shp):
@@ -25,6 +25,7 @@ def from_wkb(wkb_buf):
     return shp
 
 
-sqlite3.register_adapter(BaseGeometry, shapely_to_wkb)
+for geotype in [Point, MultiPoint, LineString, MultiLineString, Polygon, MultiPolygon]:
+    sqlite3.register_adapter(geotype, shapely_to_wkb)
 sqlite3.register_adapter(dict, geoj_to_wkb)
 sqlite3.register_converter('geom', from_wkb)

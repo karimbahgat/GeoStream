@@ -389,7 +389,33 @@ class Table(object):
 
     #### Indexing
 
-    def create_index(self, fields, name=None):
+    # TODO: Maybe have indexes be objects...
+    # ...
+
+    @property
+    def indexes(self):
+        res = self.workspace.db.cursor().execute("SELECT * FROM SQLite_master WHERE type = 'index' AND tbl_name = 'data'")
+        return [r[1] for r in res] # return names of indexes
+
+    def create_index(self, fields, name=None, replace=False, nocase=False):
+        # wrap single args in lists
+        if isinstance(fields, basestring):
+            fields = [fields]
+        # auto create index name if not specified
+        if not name:
+            fieldstring = '_'.join(fields)
+            name = '{}_{}'.format(self.name, fieldstring)
+        # drop if exists
+        if replace and name in self.indexes:
+            self.drop_index(fields, name)
+        # construct query and execute
+        fieldstring = ', '.join(fields)
+        if nocase:
+            fieldstring += ' COLLATE NOCASE'
+        query = 'CREATE INDEX {} ON {} ({})'.format(name, self.name, fieldstring)
+        self.workspace.db.cursor().execute(query)
+
+    def drop_index(self, fields, name=None):
         # wrap single args in lists
         if isinstance(fields, basestring):
             fields = [fields]
@@ -398,10 +424,9 @@ class Table(object):
             fieldstring = '_'.join(fields)
             name = '{}_{}'.format(self.name, fieldstring)
         # construct query and execute
-        fieldstring = ', '.join(fields)
-        query = 'CREATE INDEX {} ON {} ({})'.format(name, self.name, fieldstring)
+        query = 'DROP INDEX {}'.format(name)
         self.workspace.db.cursor().execute(query)
-
+            
     #### Spatial indexing
 
     # TODO: Move all spatial indexing to separate class
@@ -502,7 +527,8 @@ class Table(object):
         idstring = ','.join(map(str,ids))
         return self.select(fields=fields, where='oid IN ({})'.format(idstring))
 
-    # Exporting
+    #### Exporting
+    
     def dump(self, filepath, **kwargs):
         # TODO: Need option to choose which geom or raster field (for now just assume pure table)
         fields = [(name,typ) for name,typ in self.fields if typ not in ('geom','rast')]
