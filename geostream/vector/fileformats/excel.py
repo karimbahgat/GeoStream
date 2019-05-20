@@ -30,6 +30,8 @@ class Excel97(object):
             for _ in range(self.kwargs["skip"]):
                 next(rows)
 
+        _fields = next(rows) # skip fieldnames
+
         if "last" in self.kwargs:
             last = self.kwargs["last"]
             rows = (r for i,r in enumerate(rows) if i <= last)
@@ -95,6 +97,8 @@ class Excel(object):
         if "skip" in self.kwargs:
             for _ in range(self.kwargs["skip"]):
                 next(rows)
+
+        _fields = next(rows) # skip fieldnames
 
         if "last" in self.kwargs:
             last = self.kwargs["last"]

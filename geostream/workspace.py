@@ -169,7 +169,7 @@ class Workspace(object):
         
         # create table
         fieldstring = ', '.join(['{} {}'.format(fn,typ) for fn,typ in fields])
-        self.db.cursor().execute('''CREATE TABLE {name} ({fieldstring})'''.format(name=name, fieldstring=fieldstring))
+        self.c.execute('''CREATE TABLE {name} ({fieldstring})'''.format(name=name, fieldstring=fieldstring))
         self.db.commit()
         return Table(self, name)
 
@@ -237,10 +237,31 @@ class Workspace(object):
                       for row,geo in source)
             
             # detect field types from the first few rows
-            type_tests = [('int', lambda v: float(v).is_integer() ),
-                          ('real', lambda v: float(v) ),
-                          ('bool', lambda v: v in (True,False) ),
-                          ('text', lambda v: v ),
+            def is_missing(v):
+                if v is None:
+                    return True
+                elif isinstance(v, basestring) and not v.strip():
+                    return True
+                else:
+                    return False
+            def int_test(v):
+                try: return float(v).is_integer()
+                except: return False
+            def float_test(v):
+                try:
+                    float(v)
+                    return True
+                except: return False
+            def bool_test(v):
+                try: return v in (True,False)
+                except: return False
+            def text_test(v):
+                # text is the most flexible type and should accept any value
+                return True
+            type_tests = [('int', int_test ),
+                          ('real', float_test ),
+                          ('bool', bool_test ),
+                          ('text', text_test ),
                           ]
             
             # collect the sniff sample
@@ -253,21 +274,18 @@ class Workspace(object):
             # begin sniffing
             fieldtypes = []
             for colname,column in izip(fieldnames, izip_longest(*sniffsample)):
-                valid = (v for v in column if v is not None)
+                valid = (v for v in column if not is_missing(v))
                 typegen = iter(type_tests)
                 typ,typtest = next(typegen)
                 v = next(valid, None)
-                while v:
-                    try:
-                        # check that value can be converted to datatype
-                        if typtest(v):
-                            v = next(valid, None)
-                        else:
-                            # did not pass test
-                            typ,typtest = next(typegen)                            
-                    except:
-                        # if fails, must downgrade to next more flexible datatype
-                        # and check again
+                while v is not None:
+                    # check that value can be converted to datatype
+                    if typtest(v):
+                        v = next(valid, None)
+                    else:
+                        # did not pass test
+                        # must downgrade to next more flexible datatype
+                        # and check again next while loop
                         typ,typtest = next(typegen)
                 # sniffsample for that column complete
                 fieldtypes.append(typ)
