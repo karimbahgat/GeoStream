@@ -58,14 +58,20 @@ class Table(object):
 
     #### Hidden
 
+    def _fetchall(self, query, vals=None):
+        return self.workspace._fetchall(query, vals)
+
+    def _cursor(self):
+        return self.workspace._cursor()
+
     def _column_info(self):
         # cid,name,typ,notnull,default,pk
-        return list(self.workspace.db.cursor().execute('PRAGMA table_info({})'.format(self.name)))
+        return list(self._fetchall('PRAGMA table_info({})'.format(self.name)))
 
     #### Fields
 
     def add_field(self, field, typ):
-        self.workspace.db.cursor().execute('ALTER TABLE {name} ADD {field} {typ}'.format(name=self.name, field=field, typ=typ))
+        self._execute('ALTER TABLE {name} ADD {field} {typ}'.format(name=self.name, field=field, typ=typ))
 
     @property
     def fields(self):
@@ -141,7 +147,6 @@ class Table(object):
         if where: query += u' WHERE {}'.format(where)
         if limit: query += ' LIMIT {}'.format(limit)
         #print query
-        result = self.workspace.db.cursor().execute(query)
         if output:
             # create new table
             if fields[0] == '*':
@@ -151,11 +156,17 @@ class Table(object):
                 fields = [(fn, fieldtypes[fieldnames.index(fn)]) for fn in fields]
                 
             table = self.workspace.new_table(output, fields, replace=replace)
+            
+            cur = self._cursor()
+            result = cur.execute(query)
             for row in result:
                 table.add_row(*row)
+            cur.close()
             return table
 
         else:
+            cur = self._cursor()
+            result = cur.execute(query)
             if len(fields) == 1 and fields[0] != '*':
                 return (row[0] for row in result)
             else:
@@ -166,12 +177,12 @@ class Table(object):
     def add_row(self, *row, **kw):
         if row:
             questionmarks = ','.join(('?' for _ in row))
-            self.workspace.c.execute('INSERT INTO {} VALUES ({})'.format(self.name, questionmarks), row)
+            self._fetchall('INSERT INTO {} VALUES ({})'.format(self.name, questionmarks), row)
         elif kw:
             cols,vals = list(zip(*kw.items()))
             colstring = ','.join((col for col in cols))
             questionmarks = ','.join(('?' for _ in cols))
-            self.workspace.c.execute('INSERT INTO {} ({}) VALUES ({})'.format(self.name, colstring, questionmarks), vals)
+            self._fetchall('INSERT INTO {} ({}) VALUES ({})'.format(self.name, colstring, questionmarks), vals)
 
     def set(self, **values):
         # Setting to constant values
@@ -183,7 +194,7 @@ class Table(object):
         
         if where: query += u' WHERE {}'.format(where)
         
-        self.workspace.db.cursor().execute(query, vals)
+        self._fetchall(query, vals)
 
     def recode(self, field, **conditions):
         # Setting to multiple constant values depending on conditions
@@ -196,14 +207,14 @@ class Table(object):
         query = 'UPDATE {}'.format(self.name)
         query += ' SET {} = ({})'.format(field, whenstring)
         
-        self.workspace.db.cursor().execute(query, vals)
+        self._fetchall(query, vals)
 
     def compute(self, **expressions):
         # Setting to expressions
         where = expressions.pop('where', None)
         verbose = expressions.pop('verbose', True)
 
-        cursor = self.workspace.db.cursor()
+        cursor = self._cursor()
         exprstring = ', '.join(('{} = {}'.format(col,expr) for col,expr in expressions.items()))
 
         # prepare loop incl progress tracking
@@ -258,9 +269,6 @@ class Table(object):
                                                                                                            right=other.name,
                                                                                                            conditions=conditionstring)
 
-        # execute query
-        result = self.workspace.db.cursor().execute(query)
-
         # return results
         if output:
             # determine fields
@@ -273,11 +281,18 @@ class Table(object):
 
             # create new table
             table = self.workspace.new_table(output, fields, replace=replace)
+
+            # populate with results
+            cur = self._cursor()
+            result = cur.execute(query)
             for row in result:
                 table.add_row(*row)
+            cur.close()
             return table
         else:
             # iterate through result
+            cur = self._cursor()
+            result = cur.execute(query)
             if keep_fields:
                 result = (row[0] for row in result)
             return result
@@ -312,7 +327,8 @@ class Table(object):
             query += ' ORDER BY {}'.format(ordstring)
 
         # execute and return results
-        result = self.workspace.db.cursor().execute(query)
+        cur = self._cursor()
+        result = cur.execute(query)
         if len(fields) == 1:
             return (row[0] for row in result)
         else:
@@ -380,7 +396,8 @@ class Table(object):
             query += ' ORDER BY {}'.format(ordstring)
 
         # execute and return results
-        result = self.workspace.db.cursor().execute(query)
+        cur = self._cursor()
+        result = cur.execute(query)
         if len(stats) == 1:
             result = (row[0] for row in result)
         if not by:
@@ -394,7 +411,7 @@ class Table(object):
 
     @property
     def indexes(self):
-        res = self.workspace.db.cursor().execute("SELECT * FROM SQLite_master WHERE type = 'index' AND tbl_name = '{}'".format(self.name))
+        res = self._fetchall("SELECT * FROM SQLite_master WHERE type = 'index' AND tbl_name = '{}'".format(self.name))
         return list(res)
 
     @property
@@ -417,7 +434,7 @@ class Table(object):
         fieldstring = ', '.join(fields)
         #if nocase: fieldstring += ' COLLATE NOCASE'
         query = 'CREATE INDEX {} ON {} ({})'.format(name, self.name, fieldstring)
-        self.workspace.db.cursor().execute(query)
+        self._fetchall(query)
 
     def drop_index(self, fields, name=None):
         # wrap single args in lists
@@ -429,7 +446,7 @@ class Table(object):
             name = '{}_{}'.format(self.name, fieldstring)
         # construct query and execute
         query = 'DROP INDEX {}'.format(name)
-        self.workspace.db.cursor().execute(query)
+        self._fetchall(query)
             
     #### Spatial indexing
 

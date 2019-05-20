@@ -28,11 +28,11 @@ class Workspace(object):
         elif self.mode == 'r':
             if os.path.exists(self.path):
                 self.db = sqlite3.connect(self.path, detect_types=sqlite3.PARSE_DECLTYPES)
-                self.db.cursor().execute('pragma query_only = ON')
+                self._fetchall('pragma query_only = ON')
             else:
                 raise Exception('No such database file path: "{}".'.format(self.path))
             
-        self.c = self.db.cursor()
+        self.c = self._cursor()
 
         # register custom functions
         stats.register_funcs(self.db)
@@ -77,6 +77,21 @@ class Workspace(object):
 
     # Handling
 
+    def _fetchall(self, query, vals=None):
+        #print query
+        cur = self.db.cursor()
+        if vals:
+            res = cur.execute(query, vals).fetchall()
+        else:
+            res = cur.execute(query).fetchall()
+        cur.close()
+        return res
+
+    def _cursor(self):
+        cur = self.db.cursor()
+        #print cur
+        return cur
+
     def close(self):
         # store back any unsaved spatial indexes
         for (name,field),idx in self.spatial_indexes.items():
@@ -120,14 +135,14 @@ class Workspace(object):
 
     @property
     def tablenames(self):
-        names = [row[0] for row in self.db.cursor().execute("SELECT name FROM sqlite_master WHERE type='table'")]
+        names = [row[0] for row in self._fetchall("SELECT name FROM sqlite_master WHERE type='table'")]
         metanames = self.metatablenames
         names = [n for n in names if n not in metanames]
         return tuple(names)
 
     @property
     def metatablenames(self):
-        names = [row[0] for row in self.db.cursor().execute("SELECT name FROM sqlite_master WHERE type='table'")]
+        names = [row[0] for row in self._fetchall("SELECT name FROM sqlite_master WHERE type='table'")]
         metanames = ('spatial_indexes',)
         names = [n for n in names if n in metanames]
         return tuple(names)
@@ -144,7 +159,7 @@ class Workspace(object):
     def new_table(self, name, fields, replace=False):
         # drop existing table if exists
         if replace:
-            self.db.cursor().execute('DROP TABLE IF EXISTS {}'.format(name))
+            self._fetchall('DROP TABLE IF EXISTS {}'.format(name))
 
         # to save heartache later, auto replace problematic fieldname characters like underscore, period, etc.
         def clean(name):
@@ -169,13 +184,13 @@ class Workspace(object):
         
         # create table
         fieldstring = ', '.join(['{} {}'.format(fn,typ) for fn,typ in fields])
-        self.c.execute('''CREATE TABLE {name} ({fieldstring})'''.format(name=name, fieldstring=fieldstring))
+        self._fetchall('''CREATE TABLE {name} ({fieldstring})'''.format(name=name, fieldstring=fieldstring))
         self.db.commit()
         return Table(self, name)
 
     def drop_table(self, name, confirm=False):
         if confirm and self.mode == 'w':
-            self.db.cursor().execute('DROP TABLE {}'.format(name))
+            self._fetchall('DROP TABLE {}'.format(name))
         else:
             raise Exception('To delete this table ({}) you must set confirm = True'.format(name))
 
