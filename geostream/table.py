@@ -2,11 +2,16 @@
 import os
 from tempfile import TemporaryFile
 
+import sqlite3
 from sqlite3 import Binary
 
 from .verbose import track_progress
 from . import vector
 from . import raster
+
+class Row(sqlite3.Row):
+    def __str__(self):
+        return 'Row: {}'.format(tuple(self).__str__())
 
 class Table(object):
     def __init__(self, workspace, name, mode='r'):

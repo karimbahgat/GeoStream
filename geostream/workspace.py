@@ -10,7 +10,7 @@ from . import raster
 
 from . import stats
 
-from .table import Table
+from .table import Table, Row
 from .verbose import track_progress
 
 class Workspace(object):
@@ -33,6 +33,9 @@ class Workspace(object):
                 raise Exception('No such database file path: "{}".'.format(self.path))
             
         self.c = self._cursor()
+
+        # custom rows
+        self.db.row_factory = Row
 
         # register custom functions
         stats.register_funcs(self.db)
