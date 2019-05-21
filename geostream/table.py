@@ -76,7 +76,34 @@ class Table(object):
     #### Fields
 
     def add_field(self, field, typ):
-        self._execute('ALTER TABLE {name} ADD {field} {typ}'.format(name=self.name, field=field, typ=typ))
+        cur = self._cursor()
+        cur.execute('ALTER TABLE {name} ADD {field} {typ}'.format(name=self.name, field=field, typ=typ))
+
+        # enforce that failed type conversions become NULL
+        trigname = '{}_enforce_failed_type_insert'.format(self.name)
+        cur.execute('DROP TRIGGER IF EXISTS {}'.format(trigname))
+        fieldstring = ', '.join(("{field} = (CASE WHEN TYPEOF({field}) LIKE '{typ}%' THEN {field} ELSE NULL END)".format(field=fn,typ=typ) for fn,typ in self.fields))
+        query = ''' CREATE TRIGGER {trigname} AFTER INSERT ON {table}
+                    BEGIN
+                        UPDATE {table}
+                        SET {fieldstring}
+                        WHERE oid = NEW.oid;
+                    END;'''.format(trigname=trigname, table=self.name, fieldstring=fieldstring)
+        cur.execute(query)
+
+        # and same for updates
+        trigname = '{}_enforce_failed_type_update'.format(self.name)
+        cur.execute('DROP TRIGGER IF EXISTS {}'.format(trigname))
+        fieldstring = ', '.join(("{field} = (CASE WHEN TYPEOF({field}) LIKE '{typ}%' THEN {field} ELSE NULL END)".format(field=fn,typ=typ) for fn,typ in self.fields))
+        query = ''' CREATE TRIGGER {trigname} AFTER UPDATE ON {table}
+                    BEGIN
+                        UPDATE {table}
+                        SET {fieldstring}
+                        WHERE oid = NEW.oid;
+                    END;'''.format(trigname=trigname, table=self.name, fieldstring=fieldstring)
+        cur.execute(query)
+
+        cur.close() 
 
     @property
     def fields(self):

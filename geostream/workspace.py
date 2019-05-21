@@ -186,8 +186,46 @@ class Workspace(object):
         fields = newfields
         
         # create table
+        cur = self._cursor()
         fieldstring = ', '.join(['{} {}'.format(fn,typ) for fn,typ in fields])
-        self._fetchall('''CREATE TABLE {name} ({fieldstring})'''.format(name=name, fieldstring=fieldstring))
+        cur.execute('''CREATE TABLE {name} ({fieldstring})'''.format(name=name, fieldstring=fieldstring))
+
+        # enforce that failed type conversions become NULL
+        trigname = '{}_enforce_failed_type_insert'.format(name)
+        fieldstring = ', '.join(("{field} = (CASE WHEN TYPEOF({field}) LIKE '{typ}%' THEN {field} ELSE NULL END)".format(field=fn,typ=typ) for fn,typ in fields))
+        query = ''' CREATE TRIGGER {trigname} AFTER INSERT ON {table}
+                    BEGIN
+                        UPDATE {table}
+                        SET {fieldstring}
+                        WHERE oid = NEW.oid;
+                    END;'''.format(trigname=trigname, table=name, fieldstring=fieldstring)
+        cur.execute(query)
+
+        # and same for updates
+        trigname = '{}_enforce_failed_type_update'.format(name)
+        fieldstring = ', '.join(("{field} = (CASE WHEN TYPEOF({field}) LIKE '{typ}%' THEN {field} ELSE NULL END)".format(field=fn,typ=typ) for fn,typ in fields))
+        query = ''' CREATE TRIGGER {trigname} AFTER UPDATE ON {table}
+                    BEGIN
+                        UPDATE {table}
+                        SET {fieldstring}
+                        WHERE oid = NEW.oid;
+                    END;'''.format(trigname=trigname, table=name, fieldstring=fieldstring)
+        cur.execute(query)
+
+##        for fn,typ in fields:
+##            trigname = '{}_{}_enforce_failed_type'.format(name, fn)
+##            query = ''' CREATE TRIGGER {trigname} AFTER INSERT ON {table}
+##                        WHEN TYPEOF(NEW.{field}) <> '{typ}'
+##                        BEGIN
+##                            UPDATE {table}
+##                            SET {field} = NULL
+##                            WHERE oid = NEW.oid;
+##                        END;'''.format(trigname=trigname, table=name, field=fn, typ=typ)
+##            print query
+##            cur.execute(query)
+
+        cur.close()
+        
         self.db.commit()
         return Table(self, name)
 
