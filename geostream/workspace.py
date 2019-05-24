@@ -31,7 +31,8 @@ class Workspace(object):
                 self._fetchall('pragma query_only = ON')
             else:
                 raise Exception('No such database file path: "{}".'.format(self.path))
-            
+
+        self.db.isolation_level = None
         self.c = self._cursor()
 
         # custom rows
@@ -94,6 +95,12 @@ class Workspace(object):
         cur = self.db.cursor()
         #print cur
         return cur
+
+    def begin(self):
+        self.c.execute('BEGIN')
+
+    def commit(self):
+        self.c.execute('COMMIT')
 
     def close(self):
         # store back any unsaved spatial indexes
@@ -191,25 +198,25 @@ class Workspace(object):
         cur.execute('''CREATE TABLE {name} ({fieldstring})'''.format(name=name, fieldstring=fieldstring))
 
         # enforce that failed type conversions become NULL
-        trigname = '{}_enforce_failed_type_insert'.format(name)
+        trigname = '{}_enforce_failed_type_insert'.format(name.replace('.','_'))
         fieldstring = ', '.join(("{field} = (CASE WHEN TYPEOF({field}) LIKE '{typ}%' THEN {field} ELSE NULL END)".format(field=fn,typ=typ) for fn,typ in fields))
         query = ''' CREATE TRIGGER {trigname} AFTER INSERT ON {table}
                     BEGIN
-                        UPDATE {table}
+                        UPDATE {tableonly}
                         SET {fieldstring}
                         WHERE oid = NEW.oid;
-                    END;'''.format(trigname=trigname, table=name, fieldstring=fieldstring)
+                    END;'''.format(trigname=trigname, table=name, tableonly=name.split('.')[-1], fieldstring=fieldstring)
         cur.execute(query)
 
         # and same for updates
-        trigname = '{}_enforce_failed_type_update'.format(name)
+        trigname = '{}_enforce_failed_type_update'.format(name.replace('.','_'))
         fieldstring = ', '.join(("{field} = (CASE WHEN TYPEOF({field}) LIKE '{typ}%' THEN {field} ELSE NULL END)".format(field=fn,typ=typ) for fn,typ in fields))
         query = ''' CREATE TRIGGER {trigname} AFTER UPDATE ON {table}
                     BEGIN
-                        UPDATE {table}
+                        UPDATE {tableonly}
                         SET {fieldstring}
                         WHERE oid = NEW.oid;
-                    END;'''.format(trigname=trigname, table=name, fieldstring=fieldstring)
+                    END;'''.format(trigname=trigname, table=name, tableonly=name.split('.')[-1], fieldstring=fieldstring)
         cur.execute(query)
 
 ##        for fn,typ in fields:
@@ -276,11 +283,13 @@ class Workspace(object):
             
             # add the source rows
             fails = 0
+            self.begin()
             for row in source:
                 try: table.add_row(*row)
                 except Exception as err:
                     warnings.warn('One or more rows could not be added due to a problem: {}'.format(err))
                     fails += 1
+            self.commit()
 
         # need to determine fields
         else:
@@ -356,6 +365,7 @@ class Workspace(object):
             table = self.new_table(name, fields, replace=replace)
 
             # add the data from the sniffsample
+            self.begin()
             fails = 0
             for row in sniffsample:
                 try: table.add_row(*row)
@@ -369,6 +379,7 @@ class Workspace(object):
                 except Exception as err:
                     warnings.warn('One or more rows could not be added due to a problem: {}'.format(err))
                     fails += 1
+            self.commit()
 
         if fails > 0:
             warnings.warn('A total of {} of rows could not be imported due to unknown problems'.format(fails))

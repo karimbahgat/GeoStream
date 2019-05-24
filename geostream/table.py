@@ -1,6 +1,7 @@
 
 import os
-from tempfile import TemporaryFile
+import warnings
+from tempfile import TemporaryFile, mktemp
 
 import sqlite3
 from sqlite3 import Binary
@@ -25,7 +26,7 @@ class Table(object):
                 raise Exception('Table "workspace" arg must be a Workspace instance or a filepath to a db file.')
         self.workspace = workspace
 
-        if not name in self.workspace.tablenames + self.workspace.metatablenames:
+        if not name.lower().startswith(('temp','temporary')) and name not in self.workspace.tablenames + self.workspace.metatablenames:
             raise Exception('Could not find a table by the name "{}"'.format(name))
 
     def __str__(self):
@@ -59,7 +60,20 @@ class Table(object):
         return self.get('COUNT(oid)')
 
     def __iter__(self):
-        return self.select()
+        query = 'SELECT * FROM {}'.format(self.name)
+        cur = self._cursor()
+        result = cur.execute(query)
+        if len(self.fields) == 1:
+            return (row[0] for row in result)
+        else:
+            return result
+
+    def __getitem__(self, i):
+        limit = 1
+        offset = i
+        query = 'SELECT * FROM {} LIMIT {} OFFSET {}'.format(self.name, limit, offset)
+        return self._fetchall(query)[0]
+
 
     #### Hidden
 
@@ -71,36 +85,62 @@ class Table(object):
 
     def _column_info(self):
         # cid,name,typ,notnull,default,pk
-        return list(self._fetchall('PRAGMA table_info({})'.format(self.name)))
+        if '.' in self.name:
+            schema,name = self.name.split('.')
+            query = 'PRAGMA {}.table_info({})'.format(schema, name)
+        else:
+            query = 'PRAGMA table_info({})'.format(self.name)
+        return list(self._fetchall(query))
+
+    def _query_to_table(self, query, vals=None, output=False, replace=False):
+        if output:
+            if replace:
+                self._fetchall('DROP TABLE IF EXISTS {}'.format(output))
+            query = 'CREATE TABLE {} AS {}'.format(output, query)
+        else:
+            tempname = os.path.split(mktemp())[1]
+            output = 'temp.{}'.format(tempname)
+            query = 'CREATE TEMP TABLE {} AS {}'.format(tempname, query)
+        self._fetchall(query, vals)
+        return output
+
+    #### Optimizing
+
+    def begin(self):
+        self.workspace.begin()
+
+    def commit(self):
+        self.workspace.commit()
 
     #### Fields
 
-    def add_field(self, field, typ):
+    def add_field(self, field, dtype):
+        typ = dtype
         cur = self._cursor()
         cur.execute('ALTER TABLE {name} ADD {field} {typ}'.format(name=self.name, field=field, typ=typ))
 
         # enforce that failed type conversions become NULL
-        trigname = '{}_enforce_failed_type_insert'.format(self.name)
+        trigname = '{}_enforce_failed_type_insert'.format(self.name.replace('.','_'))
         cur.execute('DROP TRIGGER IF EXISTS {}'.format(trigname))
         fieldstring = ', '.join(("{field} = (CASE WHEN TYPEOF({field}) LIKE '{typ}%' THEN {field} ELSE NULL END)".format(field=fn,typ=typ) for fn,typ in self.fields))
         query = ''' CREATE TRIGGER {trigname} AFTER INSERT ON {table}
                     BEGIN
-                        UPDATE {table}
+                        UPDATE {tableonly}
                         SET {fieldstring}
                         WHERE oid = NEW.oid;
-                    END;'''.format(trigname=trigname, table=self.name, fieldstring=fieldstring)
+                    END;'''.format(trigname=trigname, table=self.name, tableonly=self.name.split('.')[-1], fieldstring=fieldstring)
         cur.execute(query)
 
         # and same for updates
-        trigname = '{}_enforce_failed_type_update'.format(self.name)
+        trigname = '{}_enforce_failed_type_update'.format(self.name.replace('.','_'))
         cur.execute('DROP TRIGGER IF EXISTS {}'.format(trigname))
         fieldstring = ', '.join(("{field} = (CASE WHEN TYPEOF({field}) LIKE '{typ}%' THEN {field} ELSE NULL END)".format(field=fn,typ=typ) for fn,typ in self.fields))
         query = ''' CREATE TRIGGER {trigname} AFTER UPDATE ON {table}
                     BEGIN
-                        UPDATE {table}
+                        UPDATE {tableonly}
                         SET {fieldstring}
                         WHERE oid = NEW.oid;
-                    END;'''.format(trigname=trigname, table=self.name, fieldstring=fieldstring)
+                    END;'''.format(trigname=trigname, table=self.name, tableonly=self.name.split('.')[-1], fieldstring=fieldstring)
         cur.execute(query)
 
         cur.close() 
@@ -157,17 +197,22 @@ class Table(object):
                 lines += [ident*2 + '\t\t'.join(statstrings) ]
                 
             descr = '\n'.join(lines)
-            print descr
+            print(descr)
             
         else:
             print(self.__str__())
 
+    def inspect(self, limit=10, offset=0, where=None):
+        print(self.fieldnames)
+        query = 'SELECT * FROM {}'.format(self.name)
+        if where: query += ' WHERE {}'.format(where)
+        query += ' LIMIT {} OFFSET {}'.format(limit, offset)
+        for r in self._fetchall(query):
+            print(r)
+
     #### Reading
 
     def get(self, fields=None, where=None):
-        return next(self.select(fields, where, limit=1))
-
-    def select(self, fields=None, where=None, limit=None, output=False, replace=False):
         if fields:
             if isinstance(fields, basestring):
                 fields = [fields]
@@ -175,168 +220,26 @@ class Table(object):
         else:
             fields = ['*']
             fieldstring = '*'
+            
         query = 'SELECT {} FROM {}'.format(fieldstring, self.name)
         if where: query += u' WHERE {}'.format(where)
-        if limit: query += ' LIMIT {}'.format(limit)
-        #print query
-        if output:
-            # create new table
-            if fields[0] == '*':
-                fields = list(self.fields)
+        query += ' LIMIT 2'
+        
+        result = self._fetchall(query)
+        if len(result) > 1:
+            warnings.warn('Get results is not unique, returning only the first result')
+
+        if result:
+            row = result[0]
+            if len(row) == 1:
+                return row[0]
             else:
-                fieldnames,fieldtypes = zip(*self.fields)
-                fields = [(fn, fieldtypes[fieldnames.index(fn)]) for fn in fields]
-                
-            table = self.workspace.new_table(output, fields, replace=replace)
-            
-            cur = self._cursor()
-            result = cur.execute(query)
-            for row in result:
-                table.add_row(*row)
-            cur.close()
-            return table
-
-        else:
-            cur = self._cursor()
-            result = cur.execute(query)
-            if len(fields) == 1 and fields[0] != '*':
-                return (row[0] for row in result)
-            else:
-                return result
-
-    #### Writing
-
-    def add_row(self, *row, **kw):
-        if row:
-            questionmarks = ','.join(('?' for _ in row))
-            self._fetchall('INSERT INTO {} VALUES ({})'.format(self.name, questionmarks), row)
-        elif kw:
-            cols,vals = list(zip(*kw.items()))
-            colstring = ','.join((col for col in cols))
-            questionmarks = ','.join(('?' for _ in cols))
-            self._fetchall('INSERT INTO {} ({}) VALUES ({})'.format(self.name, colstring, questionmarks), vals)
-
-    def set(self, **values):
-        # Setting to constant values
-        where = values.pop('where', None)
-        
-        cols,vals = zip(*values.items())
-        valuestring = ', '.join(('{} = ?'.format(col) for col in cols))
-        query = 'UPDATE {} SET {}'.format(self.name, valuestring)
-        
-        if where: query += u' WHERE {}'.format(where)
-        
-        self._fetchall(query, vals)
-
-    def recode(self, field, **conditions):
-        # Setting to multiple constant values depending on conditions
-        conds,vals = zip(*conditions.items())
-        whenstring = 'CASE'
-        for cond in conds:
-            whenstring += ' WHEN {} THEN ?'.format(cond)
-        whenstring += ' END'
-        
-        query = 'UPDATE {}'.format(self.name)
-        query += ' SET {} = ({})'.format(field, whenstring)
-        
-        self._fetchall(query, vals)
-
-    def compute(self, **expressions):
-        # Setting to expressions
-        where = expressions.pop('where', None)
-        verbose = expressions.pop('verbose', True)
-
-        cursor = self._cursor()
-        exprstring = ', '.join(('{} = {}'.format(col,expr) for col,expr in expressions.items()))
-
-        # prepare loop incl progress tracking
-        loop = self.select('oid', where=where)
-        if verbose:
-            if where:
-                total = self.get('COUNT(oid)', where=where)
-            else:
-                total = len(self)
-            loop = track_progress(loop, 'Computing values', total=total)
-
-        # loop and perform calculations
-        for oid in loop:
-            query = 'UPDATE {} SET {} WHERE OID = {}'.format(self.name, exprstring, oid)
-            cursor.execute(query)
-        cursor.close()
-        
-        #valuestring = ', '.join(('{col} = (SELECT OID,{expr} FROM {table} AS calculated WHERE {table}.OID = calculated.OID)'.format(col=col, expr=expr, table=self.name) for col,expr in expressions.items()))
-        #query = 'UPDATE {} SET {}'.format(self.name, valuestring)
-        #query += ' WHERE OID IN (SELECT OID FROM {})'.format(self.name)
-        # 'update natearth set calcarea = (SELECT ST_GEO_AREA(geom) FROM natearth AS calculated WHERE natearth.OID = calculated.OID)'        
-        #if where: query += ' AND {}'.format(where)
-        #print query
-        #self.workspace.c.execute(query)
-
-    #### Manipulations
-
-    def join(self, other, conditions, keep_fields=None, keep_all=True, output=False, replace=False):
-        # wrap single args in lists
-        if isinstance(conditions, basestring):
-            conditions = [conditions]
-        if isinstance(keep_fields, basestring):
-            keep_fields = [keep_fields]
-
-        # by default keep all fields
-        if not keep_fields:
-            keep_fieldstring = '*'
-        else:
-            keep_fieldstring = ', '.join(keep_fields)
-
-        # determine join type
-        if keep_all:
-            jointype = 'LEFT JOIN'
-        else:
-            jointype = 'INNER JOIN'
-
-        # construct query
-        conditionstring = ' AND '.join(conditions)
-        query = 'SELECT {fields} FROM {left} AS left {jointype} {right} AS right ON {conditions}'.format(fields=keep_fieldstring,
-                                                                                                           left=self.name,
-                                                                                                           jointype=jointype,
-                                                                                                           right=other.name,
-                                                                                                           conditions=conditionstring)
-
-        # return results
-        if output:
-            # determine fields
-            leftfields = [('{}_{}'.format(self.name,f), typ) for f,typ in self.fields]
-            rightfields = [('{}_{}'.format(other.name,f), typ) for f,typ in other.fields]
-            fields = leftfields + rightfields
-            if keep_fields:
-                keep_fields = [f.replace('.', '_') for f in keep_fields]
-                fields = [(f,typ) for f,typ in fields if f in keep_fields]
-
-            # create new table
-            table = self.workspace.new_table(output, fields, replace=replace)
-
-            # populate with results
-            cur = self._cursor()
-            result = cur.execute(query)
-            for row in result:
-                table.add_row(*row)
-            cur.close()
-            return table
-        else:
-            # iterate through result
-            cur = self._cursor()
-            result = cur.execute(query)
-            if keep_fields:
-                result = (row[0] for row in result)
-            return result
-
-    def reshape(self, columns, fields):
-        # https://stackoverflow.com/questions/2444708/sqlite-long-to-wide-formats
-        # ...
-        pass
-        
-    #### Stats
+                return row
 
     def values(self, fields, where=None, order=None, limit=None):
+        '''Iterate all of the unique values.
+        RENAME unique() ?
+        '''
         # wrap single args in lists
         if isinstance(fields, basestring):
             fields = [fields]
@@ -367,6 +270,9 @@ class Table(object):
             return result
 
     def groupby(self, by, keep_fields=None, where=None, order=None):
+        '''Iterate the groups and each of their members.
+        RENAME split() ?
+        '''
         # wrap single args in lists
         if isinstance(keep_fields, basestring):
             keep_fields = [keep_fields]
@@ -381,22 +287,153 @@ class Table(object):
             uniq = ([v] for v in uniq)
 
         # loop unique values
+        if not keep_fields: keep_fields = ['*']
         for u in uniq:
-            # wrap unique text values with quotes
-            # TODO: Change this so uses ? and inserts values the safe way
-            # ...
-            u = ["'{}'".format(v) if isinstance(v, basestring) else "{}".format(v)
-                 for v in u]
+            fieldstring = ', '.join(keep_fields)
+            query = 'SELECT {} FROM {}'.format(fieldstring, self.name)
             # insert by-fields and unique values into a where query
-            byvals = zip(by, u)
-            wherestring = ' AND '.join(['{} = {}'.format(b, v) for b,v in byvals])
+            whereby = ' AND '.join(['{} = ?'.format(b) for b in by])
+            query += ' WHERE {}'.format(whereby)
+            if where: query += ' AND {}'.format(where)
             # execute and return unique value with group result
-            group = self.select(keep_fields, where=wherestring)
+            output = self._query_to_table(query, u, output=False, replace=False)
             if len(by) == 1:
                 u = u[0]
+            group = self.workspace.table(output)
             yield u,group
 
-    def aggregate(self, stats, by=None, where=None, order=None):
+    #### Writing
+
+    def add_row(self, *row, **kw):
+        if row:
+            questionmarks = ','.join(('?' for _ in row))
+            self.workspace.c.execute('INSERT INTO {} VALUES ({})'.format(self.name, questionmarks), row)
+        elif kw:
+            cols,vals = list(zip(*kw.items()))
+            colstring = ','.join((col for col in cols))
+            questionmarks = ','.join(('?' for _ in cols))
+            self.workspace.c.execute('INSERT INTO {} ({}) VALUES ({})'.format(self.name, colstring, questionmarks), vals)
+
+    def recode(self, field, *args, **kwargs):
+        # Setting to multiple constant values depending on conditions
+        if args:
+            conds,vals = zip((arg.split('=') for arg in args))
+            conds = [c.strip() for c in conds]
+            vals = [v.strip() for v in vals]
+        elif kwargs:
+            conds,vals = zip(*conditions.items())
+        whenstring = 'CASE'
+        for cond in conds:
+            whenstring += ' WHEN {} THEN ?'.format(cond)
+        whenstring += ' END'
+        
+        query = 'UPDATE {}'.format(self.name)
+        query += ' SET {} = ({})'.format(field, whenstring)
+        
+        self._fetchall(query, vals)
+
+    def compute(self, field, value, where=None, dtype=None, verbose=False):
+        '''Computing values for new or existing field
+        '''
+        cursor = self._cursor()
+        if value is None: value = 'NULL'
+        valstring = '{} = {}'.format(field,value)
+
+        # create new field if type is specified
+        if dtype:
+            self.add_field(field, dtype)
+        
+        if verbose:
+            # prepare loop incl progress tracking
+            loop = self.values('oid', where=where)
+            if where:
+                total = self.get('COUNT(oid)', where=where)
+            else:
+                total = len(self)
+            loop = track_progress(loop, 'Computing values', total=total)
+
+            # loop and perform calculations
+            for oid in loop:
+                query = 'UPDATE {} SET {} WHERE OID = {}'.format(self.name, valstring, oid)
+                cursor.execute(query)
+            cursor.close()
+
+        else:
+            # calculate all in one go
+            query = 'UPDATE {} SET {}'.format(self.name, valstring)
+            if where: query += ' WHERE {}'.format(where)
+            cursor.execute(query)
+            cursor.close()
+
+    #### Manipulations
+
+    def select(self, fields=None, where=None, limit=None, output=False, replace=False):
+        # parse which fields to keep
+        if fields:
+            if isinstance(fields, basestring):
+                fields = [fields]
+            fieldstring = ','.join(fields)
+        else:
+            fields = ['*']
+            fieldstring = '*'
+
+        # construct query
+        query = 'SELECT {} FROM {}'.format(fieldstring, self.name)
+        if where: query += u' WHERE {}'.format(where)
+        if limit: query += ' LIMIT {}'.format(limit)
+
+        # execute and store in normal or temporary table
+        output = self._query_to_table(query, output=output, replace=replace)
+
+        # return the new table to user
+        return Table(self.workspace, output, 'w')
+
+    def join(self, other, conditions, keep_fields=None, keep_all=True, output=False, replace=False):
+        # wrap single args in lists
+        if isinstance(conditions, basestring):
+            conditions = [conditions]
+        if isinstance(keep_fields, basestring):
+            keep_fields = [keep_fields]
+
+        # by default keep all fields
+        if not keep_fields:
+            keep_fieldstring = '*'
+        else:
+            keep_fieldstring = ', '.join(keep_fields)
+
+        # determine join type
+        if keep_all:
+            jointype = 'LEFT JOIN'
+        else:
+            jointype = 'INNER JOIN'
+
+        # construct query
+        conditionstring = ' AND '.join(conditions)
+        query = 'SELECT {fields} FROM {left} AS left {jointype} {right} AS right ON {conditions}'.format(fields=keep_fieldstring,
+                                                                                                           left=self.name,
+                                                                                                           jointype=jointype,
+                                                                                                           right=other.name,
+                                                                                                           conditions=conditionstring)
+
+        # maybe rename fieldnames somehow
+        # ...
+        
+        # execute and store in normal or temporary table
+        output = self._query_to_table(query, output=output, replace=replace)
+
+        # return the new table to user
+        return Table(self.workspace, output, 'w')
+
+    def reshape(self, columns, fields):
+        # https://stackoverflow.com/questions/2444708/sqlite-long-to-wide-formats
+        # ...
+        pass
+        
+    #### Stats
+
+    def aggregate(self, stats, by=None, where=None, order=None, output=False, replace=False):
+        '''Create a table of aggregates statistics.
+        '''
         # wrap single args in lists
         if isinstance(stats, basestring):
             stats = [stats]
@@ -427,14 +464,11 @@ class Table(object):
             ordstring = ', '.join(order)
             query += ' ORDER BY {}'.format(ordstring)
 
-        # execute and return results
-        cur = self._cursor()
-        result = cur.execute(query)
-        if len(stats) == 1:
-            result = (row[0] for row in result)
-        if not by:
-            result = list(result)[0]
-        return result
+        # execute and store in normal or temporary table
+        output = self._query_to_table(query, output=output, replace=replace)
+
+        # return the new table to user
+        return Table(self.workspace, output, 'w')
 
     #### Indexing
 
