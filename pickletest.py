@@ -46,7 +46,8 @@ def timed(descr, func, obj):
     print descr, time()-t
 
 tab = gs.Table(r'C:\Users\kimok\Desktop\gazetteer data\urban.db', 'natearth')
-for geom in tab.select('geom'):
+for row in tab:
+    geom = row['geom']
     if geom.geom_type == 'Polygon':
         break
 geoj = geom.__geo_interface__

@@ -112,12 +112,18 @@ class Excel(object):
         import openpyxl as pyxl
 
         encoding = self.kwargs.get('encoding', 'utf8')
-        wb = pyxl.load_workbook(self.filepath) # WHAT'S THE ENCODING ARG HERE? 
+        wb = pyxl.load_workbook(self.filepath, read_only=True) # WHAT'S THE ENCODING ARG HERE?
         
         if "sheet" in self.kwargs:
             sheet = wb[self.kwargs["sheet"]]
         else:
             sheet = wb[wb.sheetnames[0]]
+
+        # read only has to explicitly calculate dimension
+        dimstring = sheet.calculate_dimension()
+        lowerright = dimstring.split(':')[-1].strip()
+        lastrow = int(float(''.join(c for c in lowerright if c.isdigit())))
+        sheet.nrows = lastrow
             
         return sheet
 

@@ -9,9 +9,12 @@ from . import vector
 from . import raster
 
 from . import stats
+from . import ops
 
 from .table import Table, Row
 from .verbose import track_progress
+
+sqlite3.enable_callback_tracebacks(True)
 
 class Workspace(object):
     def __init__(self, path, mode='r'):
@@ -24,10 +27,10 @@ class Workspace(object):
     def _connect(self):
         # connect to db
         if self.mode == 'w':
-            self.db = sqlite3.connect(self.path, detect_types=sqlite3.PARSE_DECLTYPES)
+            self.db = sqlite3.connect(self.path, detect_types=sqlite3.PARSE_DECLTYPES) #|sqlite3.PARSE_COLNAMES)
         elif self.mode == 'r':
             if os.path.exists(self.path):
-                self.db = sqlite3.connect(self.path, detect_types=sqlite3.PARSE_DECLTYPES)
+                self.db = sqlite3.connect(self.path, detect_types=sqlite3.PARSE_DECLTYPES) #|sqlite3.PARSE_COLNAMES)
                 self._fetchall('pragma query_only = ON')
             else:
                 raise Exception('No such database file path: "{}".'.format(self.path))
@@ -40,6 +43,7 @@ class Workspace(object):
 
         # register custom functions
         stats.register_funcs(self.db)
+        ops.register_funcs(self.db)
 
         # connect to spatial indexes, if any
         self.spatial_indexes = dict() # where they are stored when loaded in memory
@@ -197,27 +201,27 @@ class Workspace(object):
         fieldstring = ', '.join(['{} {}'.format(fn,typ) for fn,typ in fields])
         cur.execute('''CREATE TABLE {name} ({fieldstring})'''.format(name=name, fieldstring=fieldstring))
 
-        # enforce that failed type conversions become NULL
-        trigname = '{}_enforce_failed_type_insert'.format(name.replace('.','_'))
-        fieldstring = ', '.join(("{field} = (CASE WHEN TYPEOF({field}) LIKE '{typ}%' THEN {field} ELSE NULL END)".format(field=fn,typ=typ) for fn,typ in fields))
-        query = ''' CREATE TRIGGER {trigname} AFTER INSERT ON {table}
-                    BEGIN
-                        UPDATE {tableonly}
-                        SET {fieldstring}
-                        WHERE oid = NEW.oid;
-                    END;'''.format(trigname=trigname, table=name, tableonly=name.split('.')[-1], fieldstring=fieldstring)
-        cur.execute(query)
-
-        # and same for updates
-        trigname = '{}_enforce_failed_type_update'.format(name.replace('.','_'))
-        fieldstring = ', '.join(("{field} = (CASE WHEN TYPEOF({field}) LIKE '{typ}%' THEN {field} ELSE NULL END)".format(field=fn,typ=typ) for fn,typ in fields))
-        query = ''' CREATE TRIGGER {trigname} AFTER UPDATE ON {table}
-                    BEGIN
-                        UPDATE {tableonly}
-                        SET {fieldstring}
-                        WHERE oid = NEW.oid;
-                    END;'''.format(trigname=trigname, table=name, tableonly=name.split('.')[-1], fieldstring=fieldstring)
-        cur.execute(query)
+##        # enforce that failed type conversions become NULL
+##        trigname = '{}_enforce_failed_type_insert'.format(name.replace('.','_'))
+##        fieldstring = ', '.join(("{field} = (CASE WHEN TYPEOF({field}) LIKE '{typ}%' THEN {field} ELSE NULL END)".format(field=fn,typ=typ) for fn,typ in fields))
+##        query = ''' CREATE TRIGGER {trigname} AFTER INSERT ON {table}
+##                    BEGIN
+##                        UPDATE {tableonly}
+##                        SET {fieldstring}
+##                        WHERE oid = NEW.oid;
+##                    END;'''.format(trigname=trigname, table=name, tableonly=name.split('.')[-1], fieldstring=fieldstring)
+##        cur.execute(query)
+##
+##        # and same for updates
+##        trigname = '{}_enforce_failed_type_update'.format(name.replace('.','_'))
+##        fieldstring = ', '.join(("{field} = (CASE WHEN TYPEOF({field}) LIKE '{typ}%' THEN {field} ELSE NULL END)".format(field=fn,typ=typ) for fn,typ in fields))
+##        query = ''' CREATE TRIGGER {trigname} AFTER UPDATE ON {table}
+##                    BEGIN
+##                        UPDATE {tableonly}
+##                        SET {fieldstring}
+##                        WHERE oid = NEW.oid;
+##                    END;'''.format(trigname=trigname, table=name, tableonly=name.split('.')[-1], fieldstring=fieldstring)
+##        cur.execute(query)
 
 ##        for fn,typ in fields:
 ##            trigname = '{}_{}_enforce_failed_type'.format(name, fn)

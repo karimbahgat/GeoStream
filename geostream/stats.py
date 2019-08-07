@@ -6,8 +6,46 @@ import math
 
 def register_funcs(db):
     db.create_aggregate("stdev", 1, StdevFunc)
+    #db.create_aggregate("majority", 1, StdevFunc)
+    #db.create_aggregate("minority", 1, StdevFunc)
+    #db.create_aggregate("first", 1, StdevFunc)
+    #db.create_aggregate("last", 1, StdevFunc)
 
 
+
+
+class Majority:
+    # from https://stackoverflow.com/questions/2298339/standard-deviation-for-sqlite
+    def __init__(self):
+        kl
+
+    def step(self, value):
+        try:
+            if value is None:
+                return None
+
+            
+        except Exception as EXStep:
+            pass
+            return None    
+
+    def finalize(self):
+        try:
+            
+
+            return self.S
+        except Exception as EXFinal:
+            pass
+            return None
+
+class Minority:
+    pass
+
+class First:
+    pass
+
+class Last:
+    pass
 
 class StdevFunc:
     # from https://stackoverflow.com/questions/2298339/standard-deviation-for-sqlite

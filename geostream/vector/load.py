@@ -36,6 +36,9 @@ def from_file(filepath, **kwargs):
     elif filetype == 'Excel 97':
         reader = fileformats.Excel97(filepath, **kwargs)
 
+    elif filetype == 'Excel':
+        reader = fileformats.Excel(filepath, **kwargs)
+
     else:
         raise Exception("Could not import data from the given filepath: the filetype extension is either missing or not supported")
 

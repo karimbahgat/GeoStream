@@ -119,29 +119,29 @@ class Table(object):
         cur = self._cursor()
         cur.execute('ALTER TABLE {name} ADD {field} {typ}'.format(name=self.name, field=field, typ=typ))
 
-        # enforce that failed type conversions become NULL
-        trigname = '{}_enforce_failed_type_insert'.format(self.name.replace('.','_'))
-        cur.execute('DROP TRIGGER IF EXISTS {}'.format(trigname))
-        fieldstring = ', '.join(("{field} = (CASE WHEN TYPEOF({field}) LIKE '{typ}%' THEN {field} ELSE NULL END)".format(field=fn,typ=typ) for fn,typ in self.fields))
-        query = ''' CREATE TRIGGER {trigname} AFTER INSERT ON {table}
-                    BEGIN
-                        UPDATE {tableonly}
-                        SET {fieldstring}
-                        WHERE oid = NEW.oid;
-                    END;'''.format(trigname=trigname, table=self.name, tableonly=self.name.split('.')[-1], fieldstring=fieldstring)
-        cur.execute(query)
-
-        # and same for updates
-        trigname = '{}_enforce_failed_type_update'.format(self.name.replace('.','_'))
-        cur.execute('DROP TRIGGER IF EXISTS {}'.format(trigname))
-        fieldstring = ', '.join(("{field} = (CASE WHEN TYPEOF({field}) LIKE '{typ}%' THEN {field} ELSE NULL END)".format(field=fn,typ=typ) for fn,typ in self.fields))
-        query = ''' CREATE TRIGGER {trigname} AFTER UPDATE ON {table}
-                    BEGIN
-                        UPDATE {tableonly}
-                        SET {fieldstring}
-                        WHERE oid = NEW.oid;
-                    END;'''.format(trigname=trigname, table=self.name, tableonly=self.name.split('.')[-1], fieldstring=fieldstring)
-        cur.execute(query)
+##        # enforce that failed type conversions become NULL
+##        trigname = '{}_enforce_failed_type_insert'.format(self.name.replace('.','_'))
+##        cur.execute('DROP TRIGGER IF EXISTS {}'.format(trigname))
+##        fieldstring = ', '.join(("{field} = (CASE WHEN TYPEOF({field}) LIKE '{typ}%' THEN {field} ELSE NULL END)".format(field=fn,typ=typ) for fn,typ in self.fields))
+##        query = ''' CREATE TRIGGER {trigname} AFTER INSERT ON {table}
+##                    BEGIN
+##                        UPDATE {tableonly}
+##                        SET {fieldstring}
+##                        WHERE oid = NEW.oid;
+##                    END;'''.format(trigname=trigname, table=self.name, tableonly=self.name.split('.')[-1], fieldstring=fieldstring)
+##        cur.execute(query)
+##
+##        # and same for updates
+##        trigname = '{}_enforce_failed_type_update'.format(self.name.replace('.','_'))
+##        cur.execute('DROP TRIGGER IF EXISTS {}'.format(trigname))
+##        fieldstring = ', '.join(("{field} = (CASE WHEN TYPEOF({field}) LIKE '{typ}%' THEN {field} ELSE NULL END)".format(field=fn,typ=typ) for fn,typ in self.fields))
+##        query = ''' CREATE TRIGGER {trigname} AFTER UPDATE ON {table}
+##                    BEGIN
+##                        UPDATE {tableonly}
+##                        SET {fieldstring}
+##                        WHERE oid = NEW.oid;
+##                    END;'''.format(trigname=trigname, table=self.name, tableonly=self.name.split('.')[-1], fieldstring=fieldstring)
+##        cur.execute(query)
 
         cur.close() 
 
@@ -353,9 +353,11 @@ class Table(object):
             loop = track_progress(loop, 'Computing values', total=total)
 
             # loop and perform calculations
+            cursor.execute('BEGIN')
             for oid in loop:
                 query = 'UPDATE {} SET {} WHERE OID = {}'.format(self.name, valstring, oid)
                 cursor.execute(query)
+            cursor.execute('COMMIT')
             cursor.close()
 
         else:
@@ -519,6 +521,17 @@ class Table(object):
     # TODO: Move all spatial indexing to separate class
     # incl moving the spatial_indexes memory dict to the new class
     # ...
+
+    # TODO: Maybe custom implement rtrees as tables
+    # using pure python pyrtree to easily populate
+    # the node, parent, and rowid tables
+    # see: https://stackoverflow.com/questions/25241406/best-option-for-supplying-quadtree-gps-data-to-an-app/25242162#25242162
+    # https://github.com/pvanek/sqliteman/tree/master/Sqliteman/sqliteman/extensions/rtree
+    # https://github.com/endlesssoftware/sqlite3/blob/master/rtree.c
+
+    # TODO: Consider implementing quadtree tables as well
+    # perhaps based on pyqtree and update to be more efficient
+    # http://lspiroengine.com/?p=530
             
     def create_spatial_index(self, geofield, verbose=True):
         # create the spatial index
@@ -563,7 +576,9 @@ class Table(object):
             # load idx and dat blob data
             idxtable = self.workspace.table('spatial_indexes')
             print 'retrieving idx and dat binary strings from db'
-            (idx,dat) = idxtable.get(['rtree_idx','rtree_dat'], where="tbl = '{}' AND col = '{}' ".format(self.name, geofield))
+            cur = idxtable._cursor()
+            (idx,dat) = cur.execute('''select rtree_idx,rtree_dat FROM {rtree} WHERE tbl = '{table}' AND col = '{geofield}' '''.format(rtree=idxtable.name, table=self.name, geofield=geofield)).fetchone()
+            cur.close()
             # write to temp file
             temppath = TemporaryFile().name
             with open(temppath+'.idx', 'wb') as fobj:
@@ -596,8 +611,11 @@ class Table(object):
         os.remove(temppath+'.dat')
         # update the idx and dat columns in the spatial_indexes table
         idxtable = self.workspace.table('spatial_indexes')
-        idxtable.set(rtree_idx=idx, rtree_dat=dat,
-                     where="tbl = '{}' AND col = '{}' ".format(self.name, geofield))
+        cur = idxtable._cursor()
+        cur.execute('''UPDATE {rtree} SET rtree_idx=:idx, rtree_dat=:dat,
+                     WHERE tbl = '{table}' AND col = '{geofield}' '''.format(rtree=idxtable.name, table=self.name, geofield=geofield),
+                    dict(idx=idx, dat=dat))
+        cur.close()
 
     def intersection(self, geofield, bbox, fields=None):
         #if not hasattr(self, "spindex"):
@@ -612,7 +630,11 @@ class Table(object):
         ids = spindex.intersection(bbox)
         #ids = self.spindex.intersect(bbox)
         idstring = ','.join(map(str,ids))
-        return self.select(fields=fields, where='oid IN ({})'.format(idstring))
+        fieldstring = ','.join(fields) if fields else '*'
+        cur = self._cursor()
+        return cur.execute('''SELECT {fields} FROM {table} WHERE oid IN ({oids})'''.format(fields=fieldstring,
+                                                                                           table=self.name,
+                                                                                           oids=idstring))
 
     #### Exporting
     
