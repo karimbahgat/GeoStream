@@ -1,5 +1,6 @@
 
 import numpy as np
+import math
 
 from affine import Affine
 
@@ -111,12 +112,14 @@ class Raster(object):
         return (x1,y1,x2,y2)
 
     def cell_to_geo(self, px, py):
-        x,y = self.affine * (py,px)
+        x,y = self.affine * (px,py)
         return (x,y)
 
-    def geo_to_cell(self, x, y):
-        x,y = ~self.affine * (py,px)
-        return (x,y)
+    def geo_to_cell(self, x, y, fraction=False):
+        px,py = ~self.affine * (x,y)
+        if not fraction: # round to nearest cell
+            px,py = int(math.floor(px)), int(math.floor(py))
+        return (px,py)
 
     def band(self, i):
         return self.bands[i]
@@ -148,7 +151,7 @@ class Raster(object):
                 tw,th = self.tilesize
                 for y in range(0, self.rast.height, th):
                     for x in range(0, self.rast.width, tw):
-                        tile = self.rast.crop([x, y, x+tw, y+th])
+                        tile = self.rast.crop([x, y, x+tw, y+th], worldcoords=False)
                         yield tile
                         
             def __len__(self):
@@ -162,9 +165,35 @@ class Raster(object):
 
         return Tiler(self, tilesize=tilesize, tiles=tiles)
 
-    def crop(self, bbox):
-        px1,py1,px2,py2 = bbox
-        pw,ph = px2-px1, py2-py1
+    def crop(self, bbox, worldcoords=True):
+        if worldcoords:
+            x1,y1,x2,y2 = bbox
+            px1,py1 = self.geo_to_cell(x1, y1)
+            px2,py2 = self.geo_to_cell(x2, y2)
+        else:
+            px1,py1,px2,py2 = bbox
+
+        print bbox, '-->', [px1,py1,px2,py2]
+
+        # do bounds check
+        pxmin = min(px1,px2)
+        pymin = min(py1,py2)
+        pxmax = max(px1,px2)
+        pymax = max(py1,py2)
+        
+        pxmin = max(0, pxmin)
+        pymin = max(0, pymin)
+        pxmax = min(self.width, pxmax)
+        pymax = min(self.height, pymax)
+
+        #print pxmin,pymin,pxmax,pymax
+
+        if pxmax < 0 or pxmin > self.width or pymax < 0 or pymin > self.height:
+            raise Exception("The cropping bbox is entirely outside the raster extent")
+
+        pw,ph = pxmax-pxmin, pymax-pymin
+        if pw <= 0 or ph <= 0:
+            raise Exception("Cropping bbox was too small, resulting in 0 pixels")
 
         xscale,xskew,xoff,yskew,yscale,yoff,_,_,_ = list(self.affine)
         xoff += px1 * xscale

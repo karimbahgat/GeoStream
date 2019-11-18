@@ -420,9 +420,13 @@ class Workspace(object):
         fields += [('rast', 'rast')]
 
         # create the table
-        table = self.new_table(name, fields, replace=replace)
+        if name in self.tablenames:
+            table = self.table(name)
+        else:
+            table = self.new_table(name, fields, replace=replace)
     
         # iterate and add what remains of the source
+        self.begin()
         fails = 0
         for tile in source:
             if 1:
@@ -447,6 +451,8 @@ class Workspace(object):
 
         if fails > 0:
             warnings.warn('A total of {} of tiles could not be imported due to unknown problems'.format(fails))
+
+        self.commit()
 
         return table
                 
